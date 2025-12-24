@@ -1,0 +1,14 @@
+[project]
+name = "leetcode-vim"
+version = "0.1.0"
+description = "CLI tooling for solving LeetCode in Vim"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["browser-cookie3>=0.17.1", "keyring>=24.0"]
+
+[project.scripts]
+leetcodevim = "leetcode_vim.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
