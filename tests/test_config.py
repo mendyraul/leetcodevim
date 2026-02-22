@@ -20,3 +20,8 @@ def test_save_and_load_config(tmp_path, monkeypatch):
 def test_config_path_uses_xdg(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert str(config_path()).startswith(str(tmp_path / "xdg"))
+
+
+def test_load_config_returns_none_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
+    assert load_config() is None
