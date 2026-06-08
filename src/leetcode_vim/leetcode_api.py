@@ -30,22 +30,24 @@ class LeetCodeError(RuntimeError):
     pass
 
 
-def _build_headers(auth: LeetCodeSession) -> dict[str, str]:
-    cookies = [f"LEETCODE_SESSION={auth.session}"]
-    if auth.csrf:
-        cookies.append(f"csrftoken={auth.csrf}")
+def _build_headers(auth: LeetCodeSession | None = None) -> dict[str, str]:
     headers = {
         "Content-Type": "application/json",
         "Referer": "https://leetcode.com/",
         "User-Agent": "leetcode-vim-cli",
-        "Cookie": "; ".join(cookies),
     }
+    if not auth:
+        return headers
+    cookies = [f"LEETCODE_SESSION={auth.session}"]
+    if auth.csrf:
+        cookies.append(f"csrftoken={auth.csrf}")
+    headers["Cookie"] = "; ".join(cookies)
     if auth.csrf:
         headers["x-csrftoken"] = auth.csrf
     return headers
 
 
-def _post_graphql(query: str, variables: dict[str, str], auth: LeetCodeSession) -> dict[str, object]:
+def _post_graphql(query: str, variables: dict[str, str], auth: LeetCodeSession | None = None) -> dict[str, object]:
     payload = json.dumps({"query": query, "variables": variables}).encode("utf-8")
     request = urllib.request.Request(LEETCODE_GRAPHQL_URL, data=payload, method="POST")
     for key, value in _build_headers(auth).items():
@@ -63,7 +65,7 @@ def _post_graphql(query: str, variables: dict[str, str], auth: LeetCodeSession) 
     return data
 
 
-def fetch_problem(slug: str, auth: LeetCodeSession) -> Problem:
+def fetch_problem(slug: str, auth: LeetCodeSession | None = None) -> Problem:
     query = """
     query questionData($titleSlug: String!) {
       question(titleSlug: $titleSlug) {

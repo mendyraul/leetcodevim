@@ -16,31 +16,38 @@ pip install leetcode-vim
 leetcodevim init --workspace ~/leetcode --language python
 ```
 
-3) Save your LeetCode session token (from browser cookies):
+3) Pull a problem — auth is not required for this step:
 
 ```bash
-leetcodevim auth set --session "<LEETCODE_SESSION>" --csrf "<csrftoken>"
+leetcodevim pull two-sum
 ```
 
-4) In Vim, pull a problem:
+Or from Vim:
 
 ```vim
 :LeetCodePull two-sum
 ```
 
-This creates `solution.py` and a placeholder `problem.txt` in your workspace.
+This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable.
+
+4) Save your LeetCode session token only when you want account-specific actions like `submit` or `auth whoami`:
+
+```bash
+leetcodevim auth set --session "<LEETCODE_SESSION>" --csrf "<csrftoken>"
+```
 
 ## Auth notes
 
+- `pull`, `list`, and local file generation work without auth.
+- `submit`, `auth whoami`, and other account-specific calls require `LEETCODE_SESSION` (and `LEETCODE_CSRF` for submit).
 - The CLI reads `LEETCODE_SESSION` and `LEETCODE_CSRF` from the environment first.
 - Tokens are stored in the OS keychain via `keyring` when available, otherwise in `~/.config/leetcode-vim/config.json`.
 - Config files are written with `0600` permissions where supported.
 - You can temporarily override without writing to disk:
 
 ```bash
-LEETCODE_SESSION="<token>" LEETCODE_CSRF="<token>" leetcodevim pull two-sum
+LEETCODE_SESSION="<token>" LEETCODE_CSRF="<token>" leetcodevim submit
 ```
-leetcodevim auth import-cookie --browser chrome --domain leetcode.com
 
 If you forget the steps, run:
 
@@ -64,8 +71,9 @@ leetcodevim auth import-cookie --browser chrome --domain leetcode.com
 ## After pip install
 
 1) Run `leetcodevim init --workspace ~/leetcode --language python`
-2) Run `leetcodevim auth login`, then `leetcodevim auth set ...`
-3) In Vim, run `:LeetCodePull two-sum`
+2) Run `leetcodevim pull two-sum`
+3) Optional: run `leetcodevim auth login`, then `leetcodevim auth set ...` before using `submit`
+4) In Vim, run `:LeetCodePull two-sum`
 
 ## Testing and submitting
 

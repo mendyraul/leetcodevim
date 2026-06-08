@@ -74,26 +74,28 @@ def cmd_pull(args: argparse.Namespace) -> int:
     if not solution_path.exists():
         solution_path.write_text(get_template(config.language), encoding="utf-8")
     metadata_path = problem_dir / "problem.txt"
-    if not metadata_path.exists():
+    sample_path = problem_dir / "sample.txt"
+    if not metadata_path.exists() or not sample_path.exists():
         session = _effective_session(config)
-        if session:
-            auth = LeetCodeSession(session=session, csrf=_effective_csrf(config))
-            try:
-                problem = fetch_problem(slug, auth)
+        auth = LeetCodeSession(session=session, csrf=_effective_csrf(config)) if session else None
+        try:
+            problem = fetch_problem(slug, auth)
+            if not metadata_path.exists():
                 metadata_path.write_text(_format_problem(problem), encoding="utf-8")
-                if problem.sample_test_case:
-                    sample_path = problem_dir / "sample.txt"
-                    sample_path.write_text(problem.sample_test_case.strip() + "\n", encoding="utf-8")
-            except LeetCodeError as exc:
+            if problem.sample_test_case and not sample_path.exists():
+                sample_path.write_text(problem.sample_test_case.strip() + "\n", encoding="utf-8")
+        except LeetCodeError as exc:
+            if not metadata_path.exists():
                 metadata_path.write_text(
                     f"Problem: {args.slug}\nSlug: {slug}\n\nAPI error: {exc}\n",
                     encoding="utf-8",
                 )
-        else:
-            metadata_path.write_text(
-                f"Problem: {args.slug}\nSlug: {slug}\n\nTODO: fetch description from API\n",
-                encoding="utf-8",
-            )
+            if not session:
+                print(
+                    "Warning: could not fetch public problem metadata. "
+                    "You can retry later or run with auth via `leetcodevim auth login`.",
+                    file=sys.stderr,
+                )
     print(str(solution_path))
     return 0
 
