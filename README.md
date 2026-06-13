@@ -75,6 +75,27 @@ leetcodevim auth import-cookie --browser chrome --domain leetcode.com
 3) Optional: run `leetcodevim auth login`, then `leetcodevim auth set ...` before using `submit`
 4) In Vim, run `:LeetCodePull two-sum`
 
+## Local progress tracking
+
+`leetcodevim` keeps optional offline progress state in `WORKSPACE/.leetcodevim-state.json`.
+
+Tracked fields per problem:
+- `status`: one of `pulled`, `in-progress`, `tested`, `solved`, `submitted`, `review`
+- `notes`: freeform text
+- `tags`: simple comma-separated labels
+- `created_at` / `updated_at`: UTC timestamps
+
+Examples:
+
+```bash
+leetcodevim status
+leetcodevim status two-sum
+leetcodevim mark two-sum --status in-progress --notes "retry later" --tags array,two-pointers
+leetcodevim mark two-sum --status solved --tags array
+```
+
+The state file is local-only, auth-free, and easy to ignore in git/workspaces.
+
 ## Testing and submitting
 
 From a problem directory:
