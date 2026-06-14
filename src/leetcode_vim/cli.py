@@ -16,8 +16,35 @@ from .leetcode_api import (
     poll_submission,
     submit_solution,
 )
-from .templates import get_template
 from .runner import RunnerError, run_python
+from .templates import SUPPORTED_LANGUAGES, get_template
+
+LANGUAGE_SUPPORT_MATRIX: dict[str, dict[str, str]] = {
+    "init": {
+        "python": "full",
+        "cpp": "scaffold-only",
+    },
+    "pull": {
+        "python": "full",
+        "cpp": "scaffold-only",
+    },
+    "list": {
+        "python": "full",
+        "cpp": "scaffold-only",
+    },
+    "test": {
+        "python": "full",
+        "cpp": "unsupported",
+    },
+    "submit": {
+        "python": "full",
+        "cpp": "unsupported",
+    },
+    "vim": {
+        "python": "matches-cli",
+        "cpp": "matches-cli",
+    },
+}
 
 
 def _ensure_config() -> Config:
@@ -53,12 +80,55 @@ def _slugify(text: str) -> str:
     return slug
 
 
+def _normalize_language(language: str) -> str:
+    normalized = language.lower()
+    if normalized not in SUPPORTED_LANGUAGES:
+        supported = ", ".join(SUPPORTED_LANGUAGES)
+        raise SystemExit(f"Unsupported language: {language}. Supported languages: {supported}.")
+    return normalized
+
+
+def _command_support(command: str, language: str) -> str:
+    try:
+        return LANGUAGE_SUPPORT_MATRIX[command][language]
+    except KeyError as exc:
+        raise SystemExit(f"Support matrix missing for command={command!r}, language={language!r}") from exc
+
+
+def _unsupported_language_message(command: str, language: str) -> str:
+    if command == "test" and language == "cpp":
+        return (
+            "Local test runner only supports python right now. "
+            "C++ is scaffold-only: you can init, pull, and list C++ problems, "
+            "but local test/submit flows are intentionally blocked until full support lands."
+        )
+    if command == "submit" and language == "cpp":
+        return (
+            "Submit only supports python right now. "
+            "C++ is scaffold-only: keep the template locally, but switch to python or submit manually on LeetCode."
+        )
+    return f"{command} does not support {language}."
+
+
+def _ensure_command_supported(command: str, language: str) -> None:
+    status = _command_support(command, language)
+    if status == "unsupported":
+        raise SystemExit(_unsupported_language_message(command, language))
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
-    config = Config(workspace=workspace, language=args.language.lower())
+    language = _normalize_language(args.language)
+    config = Config(workspace=workspace, language=language)
     save_config(config)
     print(f"Initialized config at {workspace}")
+    if _command_support("init", language) == "scaffold-only":
+        print(
+            "Note: C++ is scaffold-only right now. You can init, pull, and list problems, "
+            "but local test and submit are not implemented.",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -102,6 +172,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 def cmd_test(_: argparse.Namespace) -> int:
     config = _ensure_config()
+    _ensure_command_supported("test", config.language)
     problem_dir = _resolve_problem_dir(config, None)
     sample_path = problem_dir / "sample.txt"
     if not sample_path.exists():
@@ -109,9 +180,6 @@ def cmd_test(_: argparse.Namespace) -> int:
         return 1
     input_text = sample_path.read_text(encoding="utf-8")
     solution_path = _resolve_solution_path(problem_dir, config.language)
-    if config.language != "python":
-        print("Only python test runner is implemented.")
-        return 1
     try:
         stdout, stderr = run_python(solution_path, input_text)
     except RunnerError as exc:
@@ -125,6 +193,7 @@ def cmd_test(_: argparse.Namespace) -> int:
 
 def cmd_submit(_: argparse.Namespace) -> int:
     config = _ensure_config()
+    _ensure_command_supported("submit", config.language)
     problem_dir = _resolve_problem_dir(config, None)
     slug = problem_dir.name
     session = _effective_session(config)

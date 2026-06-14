@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+SUPPORTED_LANGUAGES = ("python", "cpp")
+
 TEMPLATES = {
     "python": """\
 from typing import List

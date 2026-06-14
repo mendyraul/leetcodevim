@@ -36,6 +36,28 @@ This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace wh
 leetcodevim auth set --session "<LEETCODE_SESSION>" --csrf "<csrftoken>"
 ```
 
+## Official language support matrix
+
+`leetcodevim` currently has one fully supported language and one scaffold-only language:
+
+| Command / flow | Python | C++ |
+| --- | --- | --- |
+| `init` | Full support | Scaffold-only |
+| `pull` | Full support | Scaffold-only |
+| `list` | Full support | Scaffold-only |
+| `test` | Full support | Not supported |
+| `submit` | Full support | Not supported |
+| Vim commands (`:LeetCodePull`, `:LeetCodeList*`) | Matches CLI support | Matches CLI support |
+
+### What “scaffold-only” means for C++
+
+- `leetcodevim init --language cpp` is allowed.
+- `leetcodevim pull ...` generates `solution.cpp` plus local metadata files.
+- `leetcodevim list` will surface C++ problem folders.
+- `leetcodevim test` and `leetcodevim submit` intentionally fail early with clear messages instead of pretending C++ is end-to-end supported.
+
+If you want the smoothest local workflow today, use Python.
+
 ## Auth notes
 
 - `pull`, `list`, and local file generation work without auth.
@@ -83,6 +105,8 @@ From a problem directory:
 leetcodevim test
 leetcodevim submit
 ```
+
+For C++ workspaces, `test` and `submit` are intentionally blocked until those flows are fully implemented.
 
 ## Listing problems
 
