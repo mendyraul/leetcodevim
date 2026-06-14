@@ -117,6 +117,29 @@ pickers.new({}, {
 EOF
 endfunction
 
+
+function! s:LeetCodeRecent() abort
+  let l:path = trim(system('leetcodevim recent'))
+  if empty(l:path)
+    echo 'No local problems found.'
+    return
+  endif
+  execute 'edit ' . fnameescape(l:path)
+endfunction
+
+function! s:LeetCodeNext() abort
+  let l:path = trim(system('leetcodevim next'))
+  if empty(l:path)
+    echo 'No template-only problems found.'
+    return
+  endif
+  execute 'edit ' . fnameescape(l:path)
+endfunction
+
+function! s:LeetCodeStatus() abort
+  echo join(systemlist('leetcodevim status'), " | ")
+endfunction
+
 function! s:LeetCodeListSmart() abort
   if has('nvim') && exists(':Telescope')
     call s:LeetCodeListTelescope()
@@ -135,3 +158,6 @@ command! LeetCodeList call s:LeetCodeList()
 command! LeetCodeListFzf call s:LeetCodeListFzf()
 command! LeetCodeListTelescope call s:LeetCodeListTelescope()
 command! LeetCodeListSmart call s:LeetCodeListSmart()
+command! LeetCodeRecent call s:LeetCodeRecent()
+command! LeetCodeNext call s:LeetCodeNext()
+command! LeetCodeStatus call s:LeetCodeStatus()
