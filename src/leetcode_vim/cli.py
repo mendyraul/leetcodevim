@@ -17,7 +17,7 @@ from .leetcode_api import (
     submit_solution,
 )
 from .templates import get_template
-from .runner import RunnerError, run_python
+from .runner import ENTRYPOINT_ERROR, RunnerError, run_python
 
 
 def _ensure_config() -> Config:
@@ -105,17 +105,22 @@ def cmd_test(_: argparse.Namespace) -> int:
     problem_dir = _resolve_problem_dir(config, None)
     sample_path = problem_dir / "sample.txt"
     if not sample_path.exists():
-        print("sample.txt not found. Pull the problem first.")
+        print("sample.txt not found. Pull the problem first so the local runner has stdin fixtures.")
         return 1
     input_text = sample_path.read_text(encoding="utf-8")
     solution_path = _resolve_solution_path(problem_dir, config.language)
     if config.language != "python":
-        print("Only python test runner is implemented.")
+        print(
+            "Local `test` currently supports python only. "
+            "C++ scaffolds can still be pulled, but compile/run automation is not implemented yet."
+        )
         return 1
     try:
         stdout, stderr = run_python(solution_path, input_text)
     except RunnerError as exc:
         print(f"Test failed: {exc}")
+        if str(exc) == ENTRYPOINT_ERROR:
+            print("Hint: define `solve()` or `class Solution: def solve(self): ...`.")
         return 1
     if stderr:
         print(stderr.rstrip())

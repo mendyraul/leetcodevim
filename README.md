@@ -84,6 +84,22 @@ leetcodevim test
 leetcodevim submit
 ```
 
+### Local test runner contract
+
+Current support matrix for `leetcodevim test`:
+
+- `python`: supported locally today
+- `cpp`: scaffold-only for now; local compile/run is intentionally not implemented yet
+
+Python runner contract:
+
+- `leetcodevim test` reads `sample.txt` and passes it to your solution on `stdin`
+- your solution should expose either `def solve(): ...` or `class Solution: def solve(self): ...`
+- write results to standard output with `print(...)`
+- runner failures are surfaced as explicit CLI errors so missing entrypoints and raised exceptions are easier to diagnose
+
+This keeps local runs deterministic and lightweight while the project is still small.
+
 ## Listing problems
 
 CLI:
