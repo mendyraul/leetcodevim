@@ -74,6 +74,24 @@ def test_cmd_next_returns_first_template_solution_path(tmp_path, monkeypatch, ca
     assert capsys.readouterr().out.strip() == str(todo_solution)
 
 
+def test_cmd_last_aliases_recent(tmp_path, monkeypatch, capsys):
+    workspace = tmp_path / 'workspace'
+    older = workspace / 'older'
+    newer = workspace / 'newer'
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    old_solution = older / 'solution.py'
+    new_solution = newer / 'solution.py'
+    old_solution.write_text(cli.get_template('python'), encoding='utf-8')
+    new_solution.write_text('print("hi")\n', encoding='utf-8')
+    config = Config(workspace=workspace, language='python')
+    monkeypatch.setattr(cli, '_ensure_config', lambda: config)
+
+    cli.cmd_last(Namespace())
+
+    assert capsys.readouterr().out.strip() == str(new_solution)
+
+
 def test_cmd_status_summarizes_workspace(tmp_path, monkeypatch, capsys):
     workspace = tmp_path / 'workspace'
     one = workspace / 'alpha'

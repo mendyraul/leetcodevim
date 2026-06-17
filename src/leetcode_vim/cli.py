@@ -194,6 +194,10 @@ def cmd_recent(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_last(args: argparse.Namespace) -> int:
+    return cmd_recent(args)
+
+
 def cmd_next(_: argparse.Namespace) -> int:
     config = _ensure_config()
     next_problem = _next_template_problem(_problem_entries(config))
@@ -301,6 +305,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     recent_parser = subparsers.add_parser("recent", help="print the most recently touched solution path")
     recent_parser.set_defaults(func=cmd_recent)
+
+    last_parser = subparsers.add_parser("last", help="alias for recent; print the most recently touched solution path")
+    last_parser.set_defaults(func=cmd_last)
 
     next_parser = subparsers.add_parser("next", help="print the next template-only solution path")
     next_parser.set_defaults(func=cmd_next)

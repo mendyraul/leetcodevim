@@ -127,6 +127,10 @@ function! s:LeetCodeRecent() abort
   execute 'edit ' . fnameescape(l:path)
 endfunction
 
+function! s:LeetCodeLast() abort
+  call s:LeetCodeRecent()
+endfunction
+
 function! s:LeetCodeNext() abort
   let l:path = trim(system('leetcodevim next'))
   if empty(l:path)
@@ -159,5 +163,6 @@ command! LeetCodeListFzf call s:LeetCodeListFzf()
 command! LeetCodeListTelescope call s:LeetCodeListTelescope()
 command! LeetCodeListSmart call s:LeetCodeListSmart()
 command! LeetCodeRecent call s:LeetCodeRecent()
+command! LeetCodeLast call s:LeetCodeLast()
 command! LeetCodeNext call s:LeetCodeNext()
 command! LeetCodeStatus call s:LeetCodeStatus()
