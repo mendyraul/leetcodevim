@@ -16,8 +16,8 @@ from .leetcode_api import (
     poll_submission,
     submit_solution,
 )
-from .templates import get_template
 from .runner import RunnerError, run_python
+from .templates import get_template
 
 
 def _ensure_config() -> Config:
@@ -69,7 +69,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
         raise SystemExit("Invalid slug. Provide a problem title or slug.")
     problem_dir = config.workspace / slug
     problem_dir.mkdir(parents=True, exist_ok=True)
-    ext = "py" if config.language == "python" else "cpp"
+    ext = _language_extension(config.language)
     solution_path = problem_dir / f"solution.{ext}"
     if not solution_path.exists():
         solution_path.write_text(get_template(config.language), encoding="utf-8")
@@ -100,12 +100,12 @@ def cmd_pull(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_test(_: argparse.Namespace) -> int:
+def cmd_test(args: argparse.Namespace) -> int:
     config = _ensure_config()
-    problem_dir = _resolve_problem_dir(config, None)
+    problem_dir = _resolve_problem_dir(config, args.slug)
     sample_path = problem_dir / "sample.txt"
     if not sample_path.exists():
-        print("sample.txt not found. Pull the problem first.")
+        print(f"sample.txt not found in {problem_dir}. Pull the problem first.")
         return 1
     input_text = sample_path.read_text(encoding="utf-8")
     solution_path = _resolve_solution_path(problem_dir, config.language)
@@ -120,6 +120,8 @@ def cmd_test(_: argparse.Namespace) -> int:
     if stderr:
         print(stderr.rstrip())
     print(stdout.rstrip())
+    if args.slug:
+        print(f"Tested {problem_dir.name} -> {solution_path}")
     return 0
 
 
@@ -153,16 +155,56 @@ def cmd_submit(_: argparse.Namespace) -> int:
 
 def cmd_list(_: argparse.Namespace) -> int:
     config = _ensure_config()
-    ext = "py" if config.language == "python" else "cpp"
-    entries = []
-    for item in config.workspace.iterdir():
-        if not item.is_dir():
-            continue
-        solution_path = item / f"solution.{ext}"
-        if solution_path.exists():
-            entries.append((item.name, solution_path))
-    for slug, path in sorted(entries, key=lambda pair: pair[0]):
-        print(f"{slug}\t{path}")
+    entries = _problem_entries(config)
+    for entry in entries:
+        print(f"{entry['slug']}\t{entry['status']}\t{entry['solution_path']}")
+    return 0
+
+
+def cmd_status(_: argparse.Namespace) -> int:
+    config = _ensure_config()
+    entries = _problem_entries(config)
+    solved = sum(1 for entry in entries if entry["status"] == "started")
+    todo = sum(1 for entry in entries if entry["status"] == "template")
+    print(f"Workspace: {config.workspace}")
+    print(f"Language: {config.language}")
+    print(f"Problems: {len(entries)}")
+    print(f"Started: {solved}")
+    print(f"Template-only: {todo}")
+    recent = _most_recent_problem(entries)
+    if recent:
+        print(f"Last touched: {recent['slug']} -> {recent['solution_path']}")
+    else:
+        print("Last touched: none")
+    next_problem = _next_template_problem(entries)
+    if next_problem:
+        print(f"Next unsolved: {next_problem['slug']} -> {next_problem['solution_path']}")
+    else:
+        print("Next unsolved: none")
+    return 0
+
+
+def cmd_recent(_: argparse.Namespace) -> int:
+    config = _ensure_config()
+    recent = _most_recent_problem(_problem_entries(config))
+    if not recent:
+        print("No local problems found.")
+        return 1
+    print(recent["solution_path"])
+    return 0
+
+
+def cmd_last(args: argparse.Namespace) -> int:
+    return cmd_recent(args)
+
+
+def cmd_next(_: argparse.Namespace) -> int:
+    config = _ensure_config()
+    next_problem = _next_template_problem(_problem_entries(config))
+    if not next_problem:
+        print("No template-only problems found. Pull a new problem first.")
+        return 1
+    print(next_problem["solution_path"])
     return 0
 
 
@@ -249,6 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     pull_parser.set_defaults(func=cmd_pull)
 
     test_parser = subparsers.add_parser("test", help="run local tests")
+    test_parser.add_argument("--slug", help="run tests for a specific local problem from anywhere")
     test_parser.set_defaults(func=cmd_test)
 
     submit_parser = subparsers.add_parser("submit", help="submit solution")
@@ -256,6 +299,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="list local problems")
     list_parser.set_defaults(func=cmd_list)
+
+    status_parser = subparsers.add_parser("status", help="show local workspace status")
+    status_parser.set_defaults(func=cmd_status)
+
+    recent_parser = subparsers.add_parser("recent", help="print the most recently touched solution path")
+    recent_parser.set_defaults(func=cmd_recent)
+
+    last_parser = subparsers.add_parser("last", help="alias for recent; print the most recently touched solution path")
+    last_parser.set_defaults(func=cmd_last)
+
+    next_parser = subparsers.add_parser("next", help="print the next template-only solution path")
+    next_parser.set_defaults(func=cmd_next)
 
     auth_parser = subparsers.add_parser("auth", help="manage authentication")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -301,7 +356,7 @@ def _resolve_problem_dir(config: Config, slug: str | None) -> Path:
 
 
 def _resolve_solution_path(problem_dir: Path, language: str) -> Path:
-    ext = "py" if language == "python" else "cpp"
+    ext = _language_extension(language)
     solution_path = problem_dir / f"solution.{ext}"
     if not solution_path.exists():
         raise SystemExit(f"Solution not found at {solution_path}")
@@ -313,6 +368,58 @@ def _language_slug(language: str) -> str:
     if language not in mapping:
         raise SystemExit(f"Unsupported language: {language}")
     return mapping[language]
+
+
+def _language_extension(language: str) -> str:
+    mapping = {"python": "py", "cpp": "cpp"}
+    if language not in mapping:
+        raise SystemExit(f"Unsupported language: {language}")
+    return mapping[language]
+
+
+def _problem_entries(config: Config) -> list[dict[str, object]]:
+    ext = _language_extension(config.language)
+    entries: list[dict[str, object]] = []
+    if not config.workspace.exists():
+        return entries
+    for item in config.workspace.iterdir():
+        if not item.is_dir():
+            continue
+        solution_path = item / f"solution.{ext}"
+        if not solution_path.exists():
+            continue
+        status = _solution_status(solution_path, config.language)
+        entries.append(
+            {
+                "slug": item.name,
+                "solution_path": solution_path,
+                "status": status,
+                "mtime": solution_path.stat().st_mtime,
+            }
+        )
+    return sorted(entries, key=lambda entry: str(entry["slug"]))
+
+
+def _solution_status(solution_path: Path, language: str) -> str:
+    try:
+        content = solution_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
+    template = get_template(language).strip()
+    return "template" if content == template else "started"
+
+
+def _most_recent_problem(entries: list[dict[str, object]]) -> dict[str, object] | None:
+    if not entries:
+        return None
+    return max(entries, key=lambda entry: float(entry["mtime"]))
+
+
+def _next_template_problem(entries: list[dict[str, object]]) -> dict[str, object] | None:
+    for entry in entries:
+        if entry["status"] == "template":
+            return entry
+    return None
 
 
 def _poll_submission(submission_id: str, auth: LeetCodeSession) -> dict[str, object]:

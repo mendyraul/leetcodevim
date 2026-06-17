@@ -81,6 +81,7 @@ From a problem directory:
 
 ```bash
 leetcodevim test
+leetcodevim test --slug two-sum
 leetcodevim submit
 ```
 
@@ -105,3 +106,34 @@ Fuzzy pickers:
 :LeetCodeListTelescope
 :LeetCodeListSmart
 ```
+
+## Workflow helpers
+
+Common local loop helpers:
+
+```bash
+leetcodevim status          # workspace summary + last touched + next template-only problem
+leetcodevim recent          # print the most recently touched solution path
+leetcodevim last            # alias for recent; handy when you want to reopen the last problem
+leetcodevim next            # print the next template-only solution path
+leetcodevim test --slug two-sum
+```
+
+In Vim:
+
+```vim
+:edit `leetcodevim recent`
+:edit `leetcodevim next`
+:LeetCodeLast
+```
+
+`leetcodevim list` now prints `slug`, `status`, and the solution path so you can grep/filter quickly from shell scripts.
+
+## CI/tooling
+
+The repo CI now does three lightweight checks beyond plain unit tests:
+
+- bytecode/static sanity via `python -m compileall src tests`
+- packaging verification via `python -m build`
+- install smoke test from the built wheel to confirm the published CLI exposes the expected commands
+
