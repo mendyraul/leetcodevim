@@ -18,6 +18,7 @@ from .leetcode_api import (
 )
 from .templates import get_template
 from .runner import RunnerError, run_python
+from .state import ALLOWED_STATUSES, DEFAULT_STATUS, ensure_problem_state, load_state, update_problem_state
 
 
 def _ensure_config() -> Config:
@@ -96,6 +97,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
                     "You can retry later or run with auth via `leetcodevim auth login`.",
                     file=sys.stderr,
                 )
+    ensure_problem_state(config, slug)
     print(str(solution_path))
     return 0
 
@@ -154,15 +156,59 @@ def cmd_submit(_: argparse.Namespace) -> int:
 def cmd_list(_: argparse.Namespace) -> int:
     config = _ensure_config()
     ext = "py" if config.language == "python" else "cpp"
+    store = load_state(config)
     entries = []
     for item in config.workspace.iterdir():
         if not item.is_dir():
             continue
         solution_path = item / f"solution.{ext}"
         if solution_path.exists():
-            entries.append((item.name, solution_path))
-    for slug, path in sorted(entries, key=lambda pair: pair[0]):
-        print(f"{slug}\t{path}")
+            problem_state = store.problems.get(item.name)
+            status = problem_state.status if problem_state else DEFAULT_STATUS
+            entries.append((item.name, solution_path, status))
+    for slug, path, status in sorted(entries, key=lambda pair: pair[0]):
+        print(f"{slug}\t{status}\t{path}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    store = load_state(config)
+    if args.slug:
+        slug = _slugify(args.slug)
+        problem = store.problems.get(slug)
+        if not problem:
+            print(f"{slug}: no local state")
+            return 1
+        print(f"slug: {problem.slug}")
+        print(f"status: {problem.status}")
+        print(f"tags: {', '.join(problem.tags) if problem.tags else '-'}")
+        print(f"notes: {problem.notes or '-'}")
+        print(f"created_at: {problem.created_at}")
+        print(f"updated_at: {problem.updated_at}")
+        return 0
+
+    for slug, problem in sorted(store.problems.items()):
+        print(f"{slug}\t{problem.status}\t{','.join(problem.tags) or '-'}\t{problem.notes or '-'}")
+    return 0
+
+
+def cmd_mark(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    slug = _slugify(args.slug)
+    if not slug:
+        raise SystemExit("Invalid slug. Provide a problem title or slug.")
+    tags = []
+    if args.tags:
+        tags = [part.strip() for part in args.tags.split(',')]
+    problem = update_problem_state(
+        config,
+        slug,
+        status=args.status,
+        notes=args.notes,
+        tags=tags if args.tags is not None else None,
+    )
+    print(f"Updated {problem.slug}: status={problem.status}")
     return 0
 
 
@@ -256,6 +302,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="list local problems")
     list_parser.set_defaults(func=cmd_list)
+
+    status_parser = subparsers.add_parser("status", help="show local progress state")
+    status_parser.add_argument("slug", nargs="?", help="problem slug or title")
+    status_parser.set_defaults(func=cmd_status)
+
+    mark_parser = subparsers.add_parser("mark", help="update local progress state")
+    mark_parser.add_argument("slug", help="problem slug or title")
+    mark_parser.add_argument("--status", required=True, choices=ALLOWED_STATUSES, help="new progress status")
+    mark_parser.add_argument("--notes", help="replace notes text")
+    mark_parser.add_argument("--tags", help="comma-separated tags")
+    mark_parser.set_defaults(func=cmd_mark)
 
     auth_parser = subparsers.add_parser("auth", help="manage authentication")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
