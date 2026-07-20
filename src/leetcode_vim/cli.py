@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 from .auth import AuthImportError, clear_auth, import_from_browser, load_auth, save_auth
@@ -83,8 +85,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
             problem = fetch_problem(slug, auth)
             if not metadata_path.exists():
                 metadata_path.write_text(_format_problem(problem), encoding="utf-8")
-            if problem.sample_test_case and not sample_path.exists():
-                sample_path.write_text(problem.sample_test_case.strip() + "\n", encoding="utf-8")
+            sample_text = _sample_text(problem)
+            if sample_text and not sample_path.exists():
+                sample_path.write_text(sample_text.strip() + "\n", encoding="utf-8")
         except LeetCodeError as exc:
             if not metadata_path.exists():
                 metadata_path.write_text(
@@ -394,24 +397,122 @@ def _print_submission_result(result: dict[str, object]) -> None:
         print(f"Memory: {memory}")
 
 
+class _ProblemHTMLFormatter(HTMLParser):
+    _BLOCK_TAGS = {
+        "p", "div", "section", "article", "header", "footer", "li",
+        "ul", "ol", "pre", "blockquote", "br", "h1", "h2", "h3", "h4", "h5", "h6",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._list_stack: list[str] = []
+        self._in_pre = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "br":
+            self._parts.append("\n")
+        elif tag in {"p", "div", "section", "article", "blockquote"}:
+            self._parts.append("\n\n")
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n\n")
+        elif tag in {"ul", "ol"}:
+            self._parts.append("\n")
+            self._list_stack.append(tag)
+        elif tag == "li":
+            bullet = "- " if not self._list_stack or self._list_stack[-1] == "ul" else "1. "
+            self._parts.append("\n" + bullet)
+        elif tag == "pre":
+            self._parts.append("\n\n")
+            self._in_pre = True
+        elif tag == "code" and not self._in_pre:
+            self._parts.append("`")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"p", "div", "section", "article", "blockquote", "pre"}:
+            self._parts.append("\n")
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+        elif tag in {"ul", "ol"}:
+            if self._list_stack:
+                self._list_stack.pop()
+            self._parts.append("\n")
+        elif tag == "code" and not self._in_pre:
+            self._parts.append("`")
+        elif tag == "pre":
+            self._in_pre = False
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        if self._in_pre:
+            self._parts.append(data)
+            return
+        normalized = re.sub(r"\s+", " ", data)
+        if normalized.strip():
+            self._parts.append(normalized)
+
+    def get_text(self) -> str:
+        text = "".join(self._parts)
+        text = html.unescape(text)
+        text = re.sub(r"[ 	]+\n", "\n", text)
+        text = re.sub(r"\n[ 	]+", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"(?<!\n)(Example(?:s)? \d*:|Constraints:|Follow-up:)", r"\n\n\1", text)
+        return text.strip()
+
+
+def _render_problem_content(content: str) -> str:
+    formatter = _ProblemHTMLFormatter()
+    formatter.feed(content or "")
+    formatter.close()
+    return formatter.get_text()
+
+
+def _extract_sample_input(rendered_content: str) -> str | None:
+    match = re.search(
+        r"(?:^|\n)Input:\s*(.+?)(?=\n(?:Output:|Explanation:|Constraints:|Example\s*\d*:)|\Z)",
+        rendered_content,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+    sample = match.group(1).strip()
+    return sample or None
+
+
+def _sample_text(problem: object) -> str | None:
+    from .leetcode_api import Problem
+
+    if not isinstance(problem, Problem):
+        return None
+    if problem.sample_test_case and problem.sample_test_case.strip():
+        return problem.sample_test_case.strip()
+    return _extract_sample_input(_render_problem_content(problem.content))
+
+
 def _format_problem(problem: object) -> str:
     from .leetcode_api import Problem
 
     if not isinstance(problem, Problem):
         return ""
+    rendered_content = _render_problem_content(problem.content)
     lines = [
         f"Title: {problem.title}",
         f"Slug: {problem.title_slug}",
         f"Difficulty: {problem.difficulty}",
         "",
-        "Content (HTML):",
-        problem.content,
-        "",
     ]
-    if problem.sample_test_case:
-        lines.extend(["Sample Test Case:", problem.sample_test_case, ""])
+    if rendered_content:
+        lines.extend(["Prompt:", rendered_content, ""])
+    sample_text = _sample_text(problem)
+    if sample_text:
+        lines.extend(["Sample Input:", sample_text, ""])
+        if not problem.sample_test_case or problem.sample_test_case.strip() != sample_text:
+            lines.append("Note: sample.txt uses the first example input because LeetCode did not provide sampleTestCase.")
+            lines.append("")
     if problem.code_snippets:
-        lines.append("Code Snippets:")
+        lines.append("Available Templates:")
         for snippet in problem.code_snippets:
             lang = snippet.get("lang", "unknown")
             lines.append(f"- {lang}")

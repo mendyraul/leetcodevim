@@ -28,7 +28,7 @@ Or from Vim:
 :LeetCodePull two-sum
 ```
 
-This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable.
+This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable. `problem.txt` is a readable plain-text prompt with examples/constraints preserved as best-effort terminal-friendly text, and `sample.txt` uses LeetCode's `sampleTestCase` when available or falls back to the first example input.
 
 4) Save your LeetCode session token only when you want account-specific actions like `submit` or `auth whoami`:
 
