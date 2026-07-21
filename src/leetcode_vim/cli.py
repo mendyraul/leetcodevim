@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 from .auth import AuthImportError, clear_auth, import_from_browser, load_auth, save_auth
@@ -45,6 +47,7 @@ LANGUAGE_SUPPORT_MATRIX: dict[str, dict[str, str]] = {
         "cpp": "matches-cli",
     },
 }
+from .state import ALLOWED_STATUSES, DEFAULT_STATUS, ensure_problem_state, load_state, update_problem_state
 
 
 def _ensure_config() -> Config:
@@ -152,8 +155,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
             problem = fetch_problem(slug, auth)
             if not metadata_path.exists():
                 metadata_path.write_text(_format_problem(problem), encoding="utf-8")
-            if problem.sample_test_case and not sample_path.exists():
-                sample_path.write_text(problem.sample_test_case.strip() + "\n", encoding="utf-8")
+            sample_text = _sample_text(problem)
+            if sample_text and not sample_path.exists():
+                sample_path.write_text(sample_text.strip() + "\n", encoding="utf-8")
         except LeetCodeError as exc:
             if not metadata_path.exists():
                 metadata_path.write_text(
@@ -166,6 +170,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
                     "You can retry later or run with auth via `leetcodevim auth login`.",
                     file=sys.stderr,
                 )
+    ensure_problem_state(config, slug)
     print(str(solution_path))
     return 0
 
@@ -223,15 +228,59 @@ def cmd_submit(_: argparse.Namespace) -> int:
 def cmd_list(_: argparse.Namespace) -> int:
     config = _ensure_config()
     ext = "py" if config.language == "python" else "cpp"
+    store = load_state(config)
     entries = []
     for item in config.workspace.iterdir():
         if not item.is_dir():
             continue
         solution_path = item / f"solution.{ext}"
         if solution_path.exists():
-            entries.append((item.name, solution_path))
-    for slug, path in sorted(entries, key=lambda pair: pair[0]):
-        print(f"{slug}\t{path}")
+            problem_state = store.problems.get(item.name)
+            status = problem_state.status if problem_state else DEFAULT_STATUS
+            entries.append((item.name, solution_path, status))
+    for slug, path, status in sorted(entries, key=lambda pair: pair[0]):
+        print(f"{slug}\t{status}\t{path}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    store = load_state(config)
+    if args.slug:
+        slug = _slugify(args.slug)
+        problem = store.problems.get(slug)
+        if not problem:
+            print(f"{slug}: no local state")
+            return 1
+        print(f"slug: {problem.slug}")
+        print(f"status: {problem.status}")
+        print(f"tags: {', '.join(problem.tags) if problem.tags else '-'}")
+        print(f"notes: {problem.notes or '-'}")
+        print(f"created_at: {problem.created_at}")
+        print(f"updated_at: {problem.updated_at}")
+        return 0
+
+    for slug, problem in sorted(store.problems.items()):
+        print(f"{slug}\t{problem.status}\t{','.join(problem.tags) or '-'}\t{problem.notes or '-'}")
+    return 0
+
+
+def cmd_mark(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    slug = _slugify(args.slug)
+    if not slug:
+        raise SystemExit("Invalid slug. Provide a problem title or slug.")
+    tags = []
+    if args.tags:
+        tags = [part.strip() for part in args.tags.split(',')]
+    problem = update_problem_state(
+        config,
+        slug,
+        status=args.status,
+        notes=args.notes,
+        tags=tags if args.tags is not None else None,
+    )
+    print(f"Updated {problem.slug}: status={problem.status}")
     return 0
 
 
@@ -326,6 +375,17 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="list local problems")
     list_parser.set_defaults(func=cmd_list)
 
+    status_parser = subparsers.add_parser("status", help="show local progress state")
+    status_parser.add_argument("slug", nargs="?", help="problem slug or title")
+    status_parser.set_defaults(func=cmd_status)
+
+    mark_parser = subparsers.add_parser("mark", help="update local progress state")
+    mark_parser.add_argument("slug", help="problem slug or title")
+    mark_parser.add_argument("--status", required=True, choices=ALLOWED_STATUSES, help="new progress status")
+    mark_parser.add_argument("--notes", help="replace notes text")
+    mark_parser.add_argument("--tags", help="comma-separated tags")
+    mark_parser.set_defaults(func=cmd_mark)
+
     auth_parser = subparsers.add_parser("auth", help="manage authentication")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
 
@@ -406,24 +466,122 @@ def _print_submission_result(result: dict[str, object]) -> None:
         print(f"Memory: {memory}")
 
 
+class _ProblemHTMLFormatter(HTMLParser):
+    _BLOCK_TAGS = {
+        "p", "div", "section", "article", "header", "footer", "li",
+        "ul", "ol", "pre", "blockquote", "br", "h1", "h2", "h3", "h4", "h5", "h6",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._list_stack: list[str] = []
+        self._in_pre = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "br":
+            self._parts.append("\n")
+        elif tag in {"p", "div", "section", "article", "blockquote"}:
+            self._parts.append("\n\n")
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n\n")
+        elif tag in {"ul", "ol"}:
+            self._parts.append("\n")
+            self._list_stack.append(tag)
+        elif tag == "li":
+            bullet = "- " if not self._list_stack or self._list_stack[-1] == "ul" else "1. "
+            self._parts.append("\n" + bullet)
+        elif tag == "pre":
+            self._parts.append("\n\n")
+            self._in_pre = True
+        elif tag == "code" and not self._in_pre:
+            self._parts.append("`")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"p", "div", "section", "article", "blockquote", "pre"}:
+            self._parts.append("\n")
+        elif tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+        elif tag in {"ul", "ol"}:
+            if self._list_stack:
+                self._list_stack.pop()
+            self._parts.append("\n")
+        elif tag == "code" and not self._in_pre:
+            self._parts.append("`")
+        elif tag == "pre":
+            self._in_pre = False
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        if self._in_pre:
+            self._parts.append(data)
+            return
+        normalized = re.sub(r"\s+", " ", data)
+        if normalized.strip():
+            self._parts.append(normalized)
+
+    def get_text(self) -> str:
+        text = "".join(self._parts)
+        text = html.unescape(text)
+        text = re.sub(r"[ 	]+\n", "\n", text)
+        text = re.sub(r"\n[ 	]+", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"(?<!\n)(Example(?:s)? \d*:|Constraints:|Follow-up:)", r"\n\n\1", text)
+        return text.strip()
+
+
+def _render_problem_content(content: str) -> str:
+    formatter = _ProblemHTMLFormatter()
+    formatter.feed(content or "")
+    formatter.close()
+    return formatter.get_text()
+
+
+def _extract_sample_input(rendered_content: str) -> str | None:
+    match = re.search(
+        r"(?:^|\n)Input:\s*(.+?)(?=\n(?:Output:|Explanation:|Constraints:|Example\s*\d*:)|\Z)",
+        rendered_content,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+    sample = match.group(1).strip()
+    return sample or None
+
+
+def _sample_text(problem: object) -> str | None:
+    from .leetcode_api import Problem
+
+    if not isinstance(problem, Problem):
+        return None
+    if problem.sample_test_case and problem.sample_test_case.strip():
+        return problem.sample_test_case.strip()
+    return _extract_sample_input(_render_problem_content(problem.content))
+
+
 def _format_problem(problem: object) -> str:
     from .leetcode_api import Problem
 
     if not isinstance(problem, Problem):
         return ""
+    rendered_content = _render_problem_content(problem.content)
     lines = [
         f"Title: {problem.title}",
         f"Slug: {problem.title_slug}",
         f"Difficulty: {problem.difficulty}",
         "",
-        "Content (HTML):",
-        problem.content,
-        "",
     ]
-    if problem.sample_test_case:
-        lines.extend(["Sample Test Case:", problem.sample_test_case, ""])
+    if rendered_content:
+        lines.extend(["Prompt:", rendered_content, ""])
+    sample_text = _sample_text(problem)
+    if sample_text:
+        lines.extend(["Sample Input:", sample_text, ""])
+        if not problem.sample_test_case or problem.sample_test_case.strip() != sample_text:
+            lines.append("Note: sample.txt uses the first example input because LeetCode did not provide sampleTestCase.")
+            lines.append("")
     if problem.code_snippets:
-        lines.append("Code Snippets:")
+        lines.append("Available Templates:")
         for snippet in problem.code_snippets:
             lang = snippet.get("lang", "unknown")
             lines.append(f"- {lang}")

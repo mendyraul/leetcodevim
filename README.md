@@ -28,7 +28,7 @@ Or from Vim:
 :LeetCodePull two-sum
 ```
 
-This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable.
+This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable. `problem.txt` is a readable plain-text prompt with examples/constraints preserved as best-effort terminal-friendly text, and `sample.txt` uses LeetCode's `sampleTestCase` when available or falls back to the first example input.
 
 4) Save your LeetCode session token only when you want account-specific actions like `submit` or `auth whoami`:
 
@@ -96,6 +96,27 @@ leetcodevim auth import-cookie --browser chrome --domain leetcode.com
 2) Run `leetcodevim pull two-sum`
 3) Optional: run `leetcodevim auth login`, then `leetcodevim auth set ...` before using `submit`
 4) In Vim, run `:LeetCodePull two-sum`
+
+## Local progress tracking
+
+`leetcodevim` keeps optional offline progress state in `WORKSPACE/.leetcodevim-state.json`.
+
+Tracked fields per problem:
+- `status`: one of `pulled`, `in-progress`, `tested`, `solved`, `submitted`, `review`
+- `notes`: freeform text
+- `tags`: simple comma-separated labels
+- `created_at` / `updated_at`: UTC timestamps
+
+Examples:
+
+```bash
+leetcodevim status
+leetcodevim status two-sum
+leetcodevim mark two-sum --status in-progress --notes "retry later" --tags array,two-pointers
+leetcodevim mark two-sum --status solved --tags array
+```
+
+The state file is local-only, auth-free, and easy to ignore in git/workspaces.
 
 ## Testing and submitting
 
