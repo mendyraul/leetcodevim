@@ -9,3 +9,4 @@ build/
 *.swo
 STATUS.md
 .leetcodevim-state.json
+.leetcodevim/

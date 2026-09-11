@@ -16,23 +16,77 @@ function! s:LeetCodePull(slug) abort
 endfunction
 
 function! s:LeetCodeList() abort
-  let l:items = systemlist('leetcodevim list')
-  if empty(l:items)
-    echo 'No local problems found.'
+  let l:raw = system('leetcodevim list --format json')
+  let l:entries = []
+  try
+    let l:entries = json_decode(l:raw)
+  catch
+    let l:entries = []
+  endtry
+  if type(l:entries) != v:t_list || empty(l:entries)
+    let l:items = systemlist('leetcodevim list')
+    if empty(l:items)
+      echo 'No local problems found.'
+      return
+    endif
+    let l:choices = ['Select a problem:']
+    for l:item in l:items
+      let l:parts = split(l:item, "\t")
+      call add(l:choices, l:parts[0])
+    endfor
+    let l:idx = inputlist(l:choices)
+    if l:idx <= 0
+      return
+    endif
+    let l:path = split(l:items[l:idx - 1], "\t")[2]
+    execute 'edit ' . fnameescape(l:path)
     return
   endif
+
   let l:choices = ['Select a problem:']
-  for l:item in l:items
-    let l:parts = split(l:item, "\t")
-    call add(l:choices, l:parts[0])
+  for l:entry in l:entries
+    call add(l:choices, l:entry.slug . ' [' . l:entry.status . ']')
   endfor
   let l:idx = inputlist(l:choices)
   if l:idx <= 0
     return
   endif
-  let l:selected = l:items[l:idx - 1]
-  let l:path = split(l:selected, "\t")[1]
-  execute 'edit ' . fnameescape(l:path)
+  execute 'edit ' . fnameescape(l:entries[l:idx - 1].path)
+endfunction
+
+function! s:LeetCodeStatus(slug) abort
+  let l:cmd = 'leetcodevim status --format json'
+  if !empty(a:slug)
+    let l:cmd .= ' ' . shellescape(a:slug)
+  endif
+  echo system(l:cmd)
+endfunction
+
+function! s:LeetCodeNext() abort
+  let l:raw = system('leetcodevim next --format json')
+  try
+    let l:entry = json_decode(l:raw)
+  catch
+    echo 'Unable to read next problem.'
+    return
+  endtry
+  if type(l:entry) != v:t_dict || empty(l:entry)
+    echo 'No unsolved local problems.'
+    return
+  endif
+  execute 'edit ' . fnameescape(l:entry.path)
+endfunction
+
+function! s:LeetCodeRecent() abort
+  echo system('leetcodevim recent')
+endfunction
+
+function! s:LeetCodeTest(slug) abort
+  let l:cmd = 'leetcodevim test'
+  if !empty(a:slug)
+    let l:cmd .= ' --slug ' . shellescape(a:slug)
+  endif
+  echo system(l:cmd)
 endfunction
 
 function! s:LeetCodeListFzf() abort
@@ -56,7 +110,7 @@ function! s:LeetCodeOpenFromLine(line) abort
   if empty(a:line)
     return
   endif
-  let l:path = split(a:line, "\t")[1]
+  let l:path = split(a:line, "\t")[2]
   execute 'edit ' . fnameescape(l:path)
 endfunction
 
@@ -84,9 +138,9 @@ local action_state = require("telescope.actions.state")
 local lines = vim.fn.systemlist("leetcodevim list")
 local results = {}
 for _, line in ipairs(lines) do
-  local slug, path = line:match("^(.-)\t(.*)$")
-  if slug and path then
-    table.insert(results, { display = slug, path = path })
+  local slug, status, path = line:match("^(.-)\t(.-)\t(.*)$")
+  if slug and status and path then
+    table.insert(results, { display = slug .. " [" .. status .. "]", path = path })
   end
 end
 
@@ -132,6 +186,10 @@ endfunction
 command! -nargs=+ LeetCodeInit call s:LeetCodeInit(<f-args>)
 command! -nargs=1 LeetCodePull call s:LeetCodePull(<f-args>)
 command! LeetCodeList call s:LeetCodeList()
+command! -nargs=? LeetCodeStatus call s:LeetCodeStatus(<q-args>)
+command! LeetCodeNext call s:LeetCodeNext()
+command! LeetCodeRecent call s:LeetCodeRecent()
+command! -nargs=? LeetCodeTest call s:LeetCodeTest(<q-args>)
 command! LeetCodeListFzf call s:LeetCodeListFzf()
 command! LeetCodeListTelescope call s:LeetCodeListTelescope()
 command! LeetCodeListSmart call s:LeetCodeListSmart()

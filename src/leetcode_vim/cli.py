@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import re
 import sys
+from dataclasses import asdict
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -18,7 +20,17 @@ from .leetcode_api import (
     poll_submission,
     submit_solution,
 )
-from .runner import RunnerError, run_python
+from .problem_model import build_problem_record
+from .runner import RunnerError, run_python_cases
+from .state import (
+    ALLOWED_STATUSES,
+    DEFAULT_STATUS,
+    ensure_problem_state,
+    load_state,
+    repository,
+    update_problem_state,
+)
+from .storage import SubmissionRecord, utc_now
 from .templates import SUPPORTED_LANGUAGES, get_template
 
 LANGUAGE_SUPPORT_MATRIX: dict[str, dict[str, str]] = {
@@ -47,9 +59,6 @@ LANGUAGE_SUPPORT_MATRIX: dict[str, dict[str, str]] = {
         "cpp": "matches-cli",
     },
 }
-from .state import ALLOWED_STATUSES, DEFAULT_STATUS, ensure_problem_state, load_state, update_problem_state
-
-
 def _ensure_config() -> Config:
     config = load_config()
     if not config:
@@ -144,20 +153,23 @@ def cmd_pull(args: argparse.Namespace) -> int:
     problem_dir.mkdir(parents=True, exist_ok=True)
     ext = "py" if config.language == "python" else "cpp"
     solution_path = problem_dir / f"solution.{ext}"
-    if not solution_path.exists():
-        solution_path.write_text(get_template(config.language), encoding="utf-8")
     metadata_path = problem_dir / "problem.txt"
     sample_path = problem_dir / "sample.txt"
-    if not metadata_path.exists() or not sample_path.exists():
+    repo = repository(config)
+    record = repo.get_problem(slug)
+    if record is None or not metadata_path.exists():
         session = _effective_session(config)
         auth = LeetCodeSession(session=session, csrf=_effective_csrf(config)) if session else None
         try:
             problem = fetch_problem(slug, auth)
+            record = build_problem_record(problem, slug, config.language, record)
+            repo.save_problem(record)
             if not metadata_path.exists():
                 metadata_path.write_text(_format_problem(problem), encoding="utf-8")
-            sample_text = _sample_text(problem)
-            if sample_text and not sample_path.exists():
-                sample_path.write_text(sample_text.strip() + "\n", encoding="utf-8")
+            if not sample_path.exists():
+                sample_text = _sample_text(problem)
+                if sample_text:
+                    sample_path.write_text(sample_text.strip() + "\n", encoding="utf-8")
         except LeetCodeError as exc:
             if not metadata_path.exists():
                 metadata_path.write_text(
@@ -170,36 +182,39 @@ def cmd_pull(args: argparse.Namespace) -> int:
                     "You can retry later or run with auth via `leetcodevim auth login`.",
                     file=sys.stderr,
                 )
+    if not solution_path.exists():
+        solution_path.write_text(record.code if record else get_template(config.language), encoding="utf-8")
     ensure_problem_state(config, slug)
     print(str(solution_path))
     return 0
 
 
-def cmd_test(_: argparse.Namespace) -> int:
+def cmd_test(args: argparse.Namespace) -> int:
     config = _ensure_config()
     _ensure_command_supported("test", config.language)
-    problem_dir = _resolve_problem_dir(config, None)
-    sample_path = problem_dir / "sample.txt"
-    if not sample_path.exists():
-        print("sample.txt not found. Pull the problem first.")
+    problem_dir = _resolve_problem_dir(config, getattr(args, "slug", None))
+    record = repository(config).get_problem(problem_dir.name)
+    if record is None:
+        print("Problem metadata not found. Pull the problem first.")
         return 1
-    input_text = sample_path.read_text(encoding="utf-8")
+    if not record.examples:
+        print("Test failed: no parseable cached examples. Pull the problem again or add supported examples.")
+        return 1
     solution_path = _resolve_solution_path(problem_dir, config.language)
     try:
-        stdout, stderr = run_python(solution_path, input_text)
+        results = run_python_cases(solution_path, record.method_name, list(record.examples))
     except RunnerError as exc:
         print(f"Test failed: {exc}")
         return 1
-    if stderr:
-        print(stderr.rstrip())
-    print(stdout.rstrip())
+    update_problem_state(config, problem_dir.name, status="tested")
+    print(f"Passed {len(results)} example(s) for {problem_dir.name}.")
     return 0
 
 
-def cmd_submit(_: argparse.Namespace) -> int:
+def cmd_submit(args: argparse.Namespace) -> int:
     config = _ensure_config()
     _ensure_command_supported("submit", config.language)
-    problem_dir = _resolve_problem_dir(config, None)
+    problem_dir = _resolve_problem_dir(config, getattr(args, "slug", None))
     slug = problem_dir.name
     session = _effective_session(config)
     if not session:
@@ -222,24 +237,55 @@ def cmd_submit(_: argparse.Namespace) -> int:
     print(f"Submitted. ID: {submission_id}")
     result = _poll_submission(submission_id, auth)
     _print_submission_result(result)
+    repository(config).save_submissions(
+        [
+            SubmissionRecord(
+                slug=slug,
+                language=config.language,
+                remote_id=submission_id,
+                status=str(result.get("status_msg") or result.get("status_code") or "unknown"),
+                runtime=str(result.get("runtime")) if result.get("runtime") else None,
+                memory=str(result.get("memory")) if result.get("memory") else None,
+                submitted_at=utc_now(),
+            )
+        ]
+    )
+    if result.get("status_msg") == "Accepted":
+        update_problem_state(config, slug, status="submitted")
     return 0
 
 
-def cmd_list(_: argparse.Namespace) -> int:
-    config = _ensure_config()
+def _problem_entries(config: Config) -> list[dict[str, object]]:
     ext = "py" if config.language == "python" else "cpp"
     store = load_state(config)
-    entries = []
+    entries: list[dict[str, object]] = []
+    if not config.workspace.exists():
+        return entries
     for item in config.workspace.iterdir():
         if not item.is_dir():
             continue
         solution_path = item / f"solution.{ext}"
         if solution_path.exists():
             problem_state = store.problems.get(item.name)
-            status = problem_state.status if problem_state else DEFAULT_STATUS
-            entries.append((item.name, solution_path, status))
-    for slug, path, status in sorted(entries, key=lambda pair: pair[0]):
-        print(f"{slug}\t{status}\t{path}")
+            entries.append(
+                {
+                    "slug": item.name,
+                    "status": problem_state.status if problem_state else DEFAULT_STATUS,
+                    "path": str(solution_path),
+                    "updated_at": problem_state.updated_at if problem_state else None,
+                }
+            )
+    return sorted(entries, key=lambda entry: str(entry["slug"]))
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    entries = _problem_entries(config)
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps(entries, indent=2))
+        return 0
+    for entry in entries:
+        print(f"{entry['slug']}\t{entry['status']}\t{entry['path']}")
     return 0
 
 
@@ -250,8 +296,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         slug = _slugify(args.slug)
         problem = store.problems.get(slug)
         if not problem:
+            if getattr(args, "format", "text") == "json":
+                print(json.dumps({"slug": slug, "found": False}))
+                return 1
             print(f"{slug}: no local state")
             return 1
+        if getattr(args, "format", "text") == "json":
+            print(json.dumps(asdict(problem), indent=2))
+            return 0
         print(f"slug: {problem.slug}")
         print(f"status: {problem.status}")
         print(f"tags: {', '.join(problem.tags) if problem.tags else '-'}")
@@ -260,8 +312,39 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"updated_at: {problem.updated_at}")
         return 0
 
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps([asdict(problem) for _, problem in sorted(store.problems.items())], indent=2))
+        return 0
     for slug, problem in sorted(store.problems.items()):
         print(f"{slug}\t{problem.status}\t{','.join(problem.tags) or '-'}\t{problem.notes or '-'}")
+    return 0
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    entries = [entry for entry in _problem_entries(config) if entry["status"] not in {"solved", "submitted"}]
+    entry = entries[0] if entries else None
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps(entry or {}, indent=2))
+    elif entry:
+        print(f"{entry['slug']}\t{entry['status']}\t{entry['path']}")
+    else:
+        print("No unsolved local problems.")
+    return 0 if entry else 1
+
+
+def cmd_recent(args: argparse.Namespace) -> int:
+    config = _ensure_config()
+    entries = sorted(
+        _problem_entries(config),
+        key=lambda entry: str(entry.get("updated_at") or ""),
+        reverse=True,
+    )
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps(entries, indent=2))
+    else:
+        for entry in entries:
+            print(f"{entry['slug']}\t{entry['status']}\t{entry['path']}")
     return 0
 
 
@@ -367,17 +450,29 @@ def build_parser() -> argparse.ArgumentParser:
     pull_parser.set_defaults(func=cmd_pull)
 
     test_parser = subparsers.add_parser("test", help="run local tests")
+    test_parser.add_argument("--slug", help="problem slug to test from any directory")
     test_parser.set_defaults(func=cmd_test)
 
     submit_parser = subparsers.add_parser("submit", help="submit solution")
+    submit_parser.add_argument("--slug", help="problem slug to submit from any directory")
     submit_parser.set_defaults(func=cmd_submit)
 
     list_parser = subparsers.add_parser("list", help="list local problems")
+    list_parser.add_argument("--format", choices=("text", "json"), default="text")
     list_parser.set_defaults(func=cmd_list)
 
     status_parser = subparsers.add_parser("status", help="show local progress state")
     status_parser.add_argument("slug", nargs="?", help="problem slug or title")
+    status_parser.add_argument("--format", choices=("text", "json"), default="text")
     status_parser.set_defaults(func=cmd_status)
+
+    next_parser = subparsers.add_parser("next", help="show the next unsolved local problem")
+    next_parser.add_argument("--format", choices=("text", "json"), default="text")
+    next_parser.set_defaults(func=cmd_next)
+
+    recent_parser = subparsers.add_parser("recent", help="list recently updated local problems")
+    recent_parser.add_argument("--format", choices=("text", "json"), default="text")
+    recent_parser.set_defaults(func=cmd_recent)
 
     mark_parser = subparsers.add_parser("mark", help="update local progress state")
     mark_parser.add_argument("slug", help="problem slug or title")

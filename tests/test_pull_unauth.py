@@ -1,5 +1,4 @@
 from argparse import Namespace
-from pathlib import Path
 
 from leetcode_vim import cli
 from leetcode_vim.config import Config

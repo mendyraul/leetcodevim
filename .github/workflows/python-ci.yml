@@ -17,5 +17,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[dev]'
+      - name: Static checks
+        run: |
+          python -m compileall -q src tests
+          ruff check src tests
       - name: Run tests
         run: pytest -q
+      - name: Build package
+        run: python -m build
+      - name: Smoke test installed wheel
+        run: |
+          python -m venv /tmp/leetcodevim-smoke-venv
+          /tmp/leetcodevim-smoke-venv/bin/python -m pip install --quiet dist/*.whl
+          /tmp/leetcodevim-smoke-venv/bin/leetcodevim --help

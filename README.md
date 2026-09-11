@@ -28,7 +28,7 @@ Or from Vim:
 :LeetCodePull two-sum
 ```
 
-This creates `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable. `problem.txt` is a readable plain-text prompt with examples/constraints preserved as best-effort terminal-friendly text, and `sample.txt` uses LeetCode's `sampleTestCase` when available or falls back to the first example input.
+This creates a LeetCode-native `solution.py`, `problem.txt`, and `sample.txt` in your workspace when LeetCode's public problem API is reachable. The Python scaffold uses the returned `Solution` class and method signature. `problem.txt` is a readable plain-text prompt with examples/constraints preserved as best-effort terminal-friendly text, and `sample.txt` is retained as a human-readable copy of the first sample input.
 
 4) Save your LeetCode session token only when you want account-specific actions like `submit` or `auth whoami`:
 
@@ -99,7 +99,9 @@ leetcodevim auth import-cookie --browser chrome --domain leetcode.com
 
 ## Local progress tracking
 
-`leetcodevim` keeps optional offline progress state in `WORKSPACE/.leetcodevim-state.json`.
+`leetcodevim` keeps optional offline progress state, cached problem metadata, examples, and submission history in `WORKSPACE/.leetcodevim/state.db`.
+
+The database is created automatically, uses a versioned SQLite schema, and is portable with the workspace. Existing `.leetcodevim-state.json` files are imported on first access and are never deleted.
 
 Tracked fields per problem:
 - `status`: one of `pulled`, `in-progress`, `tested`, `solved`, `submitted`, `review`
@@ -114,18 +116,23 @@ leetcodevim status
 leetcodevim status two-sum
 leetcodevim mark two-sum --status in-progress --notes "retry later" --tags array,two-pointers
 leetcodevim mark two-sum --status solved --tags array
+leetcodevim next
+leetcodevim recent
 ```
 
-The state file is local-only, auth-free, and easy to ignore in git/workspaces.
+The database is local-only, auth-free, and easy to ignore in git/workspaces.
 
 ## Testing and submitting
 
-From a problem directory:
+From a problem directory, or from anywhere with `--slug`:
 
 ```bash
 leetcodevim test
-leetcodevim submit
+leetcodevim test --slug two-sum
+leetcodevim submit --slug two-sum
 ```
+
+`test` runs the cached LeetCode examples against the generated `Solution.<method>()`. It reports missing methods, malformed examples, runtime exceptions, and incorrect results as failures. C++ remains scaffold-only until its compiler/runtime contract is implemented.
 
 For C++ workspaces, `test` and `submit` are intentionally blocked until those flows are fully implemented.
 
@@ -149,4 +156,16 @@ Fuzzy pickers:
 :LeetCodeListFzf
 :LeetCodeListTelescope
 :LeetCodeListSmart
+:LeetCodeStatus [slug]
+:LeetCodeNext
+:LeetCodeRecent
+:LeetCodeTest [slug]
 ```
+
+## Architecture
+
+- `leetcode_api.py` handles the public problem query and authenticated submission endpoints.
+- `problem_model.py` turns API snippets and examples into a cached, executable problem definition.
+- `storage.py` owns the versioned workspace SQLite repository.
+- `runner.py` executes Python `Solution` methods against cached examples without network access.
+- `plugin/leetcodevim.vim` is a thin editor adapter around the CLI and supports built-in Vim, fzf, and Telescope pickers.

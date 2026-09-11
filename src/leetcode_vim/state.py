@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
+from .storage import SQLiteRepository, utc_now
+
 
 DEFAULT_STATUS = "pulled"
 ALLOWED_STATUSES = ("pulled", "in-progress", "tested", "solved", "submitted", "review")
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+LEGACY_STATE_NAME = ".leetcodevim-state.json"
 
 
 @dataclass
@@ -21,8 +19,8 @@ class ProblemState:
     status: str = DEFAULT_STATUS
     notes: str = ""
     tags: list[str] = field(default_factory=list)
-    created_at: str = field(default_factory=_utc_now)
-    updated_at: str = field(default_factory=_utc_now)
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "ProblemState":
@@ -36,8 +34,8 @@ class ProblemState:
             status=status,
             notes=str(data.get("notes") or ""),
             tags=tags,
-            created_at=str(data.get("created_at") or _utc_now()),
-            updated_at=str(data.get("updated_at") or _utc_now()),
+            created_at=str(data.get("created_at") or utc_now()),
+            updated_at=str(data.get("updated_at") or utc_now()),
         )
 
 
@@ -60,36 +58,57 @@ class StateStore:
 
 
 def state_path(config: Config) -> Path:
-    return config.workspace / ".leetcodevim-state.json"
+    """Compatibility path for the pre-SQLite state file."""
+
+    return config.workspace / LEGACY_STATE_NAME
+
+
+def repository(config: Config) -> SQLiteRepository:
+    return SQLiteRepository(config.workspace)
+
+
+def _import_legacy_state(config: Config, repo: SQLiteRepository) -> None:
+    path = state_path(config)
+    if not path.exists():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    legacy = StateStore.from_dict(raw)
+    for problem in legacy.problems.values():
+        if not problem.slug or repo.get_progress(problem.slug) is not None:
+            continue
+        repo.save_progress(asdict(problem))
 
 
 def load_state(config: Config) -> StateStore:
-    path = state_path(config)
-    if not path.exists():
-        return StateStore()
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        return StateStore()
-    return StateStore.from_dict(data)
+    repo = repository(config)
+    _import_legacy_state(config, repo)
+    problems = {
+        item["slug"]: ProblemState.from_dict(item)
+        for item in repo.list_progress()
+        if item.get("slug")
+    }
+    return StateStore(problems=problems)
 
 
 def save_state(config: Config, store: StateStore) -> None:
-    path = state_path(config)
-    payload = {
-        "version": store.version,
-        "problems": {slug: asdict(problem) for slug, problem in sorted(store.problems.items())},
-    }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    repo = repository(config)
+    for problem in store.problems.values():
+        repo.save_progress(asdict(problem))
 
 
 def ensure_problem_state(config: Config, slug: str) -> ProblemState:
-    store = load_state(config)
-    current = store.problems.get(slug)
+    repo = repository(config)
+    _import_legacy_state(config, repo)
+    current = repo.get_progress(slug)
     if current:
-        return current
+        return ProblemState.from_dict(current)
     problem = ProblemState(slug=slug)
-    store.problems[slug] = problem
-    save_state(config, store)
+    repo.save_progress(asdict(problem))
     return problem
 
 
@@ -101,17 +120,18 @@ def update_problem_state(
     notes: str | None = None,
     tags: list[str] | None = None,
 ) -> ProblemState:
-    store = load_state(config)
-    problem = store.problems.get(slug) or ProblemState(slug=slug)
+    if status is not None and status not in ALLOWED_STATUSES:
+        raise ValueError(f"Unsupported status: {status}")
+    repo = repository(config)
+    _import_legacy_state(config, repo)
+    current = repo.get_progress(slug)
+    problem = ProblemState.from_dict(current) if current else ProblemState(slug=slug)
     if status is not None:
-        if status not in ALLOWED_STATUSES:
-            raise ValueError(f"Unsupported status: {status}")
         problem.status = status
     if notes is not None:
         problem.notes = notes.strip()
     if tags is not None:
         problem.tags = [tag.strip() for tag in tags if tag.strip()]
-    problem.updated_at = _utc_now()
-    store.problems[slug] = problem
-    save_state(config, store)
+    problem.updated_at = utc_now()
+    repo.save_progress(asdict(problem))
     return problem
