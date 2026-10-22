@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 from .config import Config, save_config
 
@@ -64,6 +65,10 @@ def load_auth(config: Config) -> AuthResult:
     csrf = None
     if keyring:
         try:
+            bundle = keyring.get_password(SERVICE_NAME, 'AUTH_BUNDLE')
+            if bundle:
+                data = json.loads(bundle)
+                return AuthResult(session=data['session'], csrf=data.get('csrf'))
             session = keyring.get_password(SERVICE_NAME, "LEETCODE_SESSION")
             csrf = keyring.get_password(SERVICE_NAME, "LEETCODE_CSRF")
         except Exception:
@@ -72,26 +77,26 @@ def load_auth(config: Config) -> AuthResult:
     return AuthResult(session=session or config.session, csrf=csrf or config.csrf)
 
 
-def save_auth(config: Config, session: str, csrf: str | None) -> None:
+def save_auth(config: Config, session: str, csrf: str | None, allow_file: bool = False) -> None:
     keyring = _keyring()
     if keyring:
         try:
-            keyring.set_password(SERVICE_NAME, "LEETCODE_SESSION", session)
-            if csrf:
-                keyring.set_password(SERVICE_NAME, "LEETCODE_CSRF", csrf)
+            keyring.set_password(SERVICE_NAME, 'AUTH_BUNDLE', json.dumps({'session': session, 'csrf': csrf}))
+            config.session = config.csrf = None
+            save_config(config)
             return
         except Exception:
             pass
-    config.session = session
-    if csrf:
-        config.csrf = csrf
+    if not allow_file:
+        raise AuthImportError('Secure credential storage unavailable. Use the editor session or --allow-file explicitly.')
+    config.session, config.csrf = session, csrf
     save_config(config)
 
 
 def clear_auth(config: Config) -> None:
     keyring = _keyring()
     if keyring:
-        for name in ("LEETCODE_SESSION", "LEETCODE_CSRF"):
+        for name in ("AUTH_BUNDLE", "LEETCODE_SESSION", "LEETCODE_CSRF"):
             try:
                 keyring.delete_password(SERVICE_NAME, name)
             except Exception:

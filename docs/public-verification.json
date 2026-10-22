@@ -1,0 +1,47 @@
+{
+  "checked_at": "2026-10-21",
+  "mode": "anonymous, read-only; temporary workspaces",
+  "checks": [
+    {
+      "check": "browse",
+      "passed": true
+    },
+    {
+      "check": "daily",
+      "passed": true
+    },
+    {
+      "check": "problem",
+      "passed": true
+    },
+    {
+      "check": "design",
+      "passed": true
+    },
+    {
+      "check": "contests",
+      "passed": true
+    },
+    {
+      "check": "profile",
+      "passed": true
+    },
+    {
+      "check": "open_python",
+      "passed": true
+    },
+    {
+      "check": "open_cpp",
+      "passed": true
+    },
+    {
+      "check": "design_examples_python",
+      "passed": true
+    },
+    {
+      "check": "design_examples_cpp",
+      "passed": true
+    }
+  ],
+  "authenticated_acceptance": "pending"
+}

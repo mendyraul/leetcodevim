@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DATABASE_RELATIVE_PATH = Path(".leetcodevim") / "state.db"
 
 
@@ -71,6 +72,12 @@ class SQLiteRepository:
                     raise StorageError(
                         f"Database schema {version} is newer than this leetcodevim version ({SCHEMA_VERSION})."
                     )
+                if version == 1:
+                    backup_path = self.path.with_suffix('.v1.backup.db')
+                    if not backup_path.exists():
+                        with sqlite3.connect(backup_path) as backup:
+                            connection.backup(backup)
+                        os.chmod(backup_path, 0o600)
                 connection.executescript(
                     """
                     CREATE TABLE IF NOT EXISTS problems (
@@ -112,7 +119,19 @@ class SQLiteRepository:
                     CREATE INDEX IF NOT EXISTS submissions_slug_idx ON submissions(slug);
                     """
                 )
+                connection.execute('''CREATE TABLE IF NOT EXISTS companion_cache (
+                    account TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
+                    payload TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(account, kind, key))''')
+                connection.execute('''CREATE TABLE IF NOT EXISTS companion_drafts (
+                    slug TEXT NOT NULL, language TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(slug, language))''')
+                connection.execute('''CREATE TABLE IF NOT EXISTS companion_operations (
+                    account TEXT NOT NULL, remote_id TEXT NOT NULL, slug TEXT NOT NULL,
+                    kind TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(account, remote_id))''')
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            os.chmod(self.path, 0o600)
         except sqlite3.Error as exc:
             raise StorageError(f"Could not initialize {self.path}: {exc}") from exc
 

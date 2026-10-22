@@ -2,194 +2,47 @@ if exists('g:loaded_leetcodevim')
   finish
 endif
 let g:loaded_leetcodevim = 1
-
-function! s:LeetCodeInit(workspace, language) abort
-  let l:cmd = 'leetcodevim init --workspace ' . shellescape(a:workspace)
-  let l:cmd .= ' --language ' . shellescape(a:language)
-  echo system(l:cmd)
-endfunction
-
-function! s:LeetCodePull(slug) abort
-  let l:cmd = 'leetcodevim pull ' . shellescape(a:slug)
-  let l:path = system(l:cmd)
-  execute 'edit ' . fnameescape(trim(l:path))
-endfunction
-
-function! s:LeetCodeList() abort
-  let l:raw = system('leetcodevim list --format json')
-  let l:entries = []
-  try
-    let l:entries = json_decode(l:raw)
-  catch
-    let l:entries = []
-  endtry
-  if type(l:entries) != v:t_list || empty(l:entries)
-    let l:items = systemlist('leetcodevim list')
-    if empty(l:items)
-      echo 'No local problems found.'
-      return
-    endif
-    let l:choices = ['Select a problem:']
-    for l:item in l:items
-      let l:parts = split(l:item, "\t")
-      call add(l:choices, l:parts[0])
-    endfor
-    let l:idx = inputlist(l:choices)
-    if l:idx <= 0
-      return
-    endif
-    let l:path = split(l:items[l:idx - 1], "\t")[2]
-    execute 'edit ' . fnameescape(l:path)
-    return
-  endif
-
-  let l:choices = ['Select a problem:']
-  for l:entry in l:entries
-    call add(l:choices, l:entry.slug . ' [' . l:entry.status . ']')
-  endfor
-  let l:idx = inputlist(l:choices)
-  if l:idx <= 0
-    return
-  endif
-  execute 'edit ' . fnameescape(l:entries[l:idx - 1].path)
-endfunction
-
-function! s:LeetCodeStatus(slug) abort
-  let l:cmd = 'leetcodevim status --format json'
-  if !empty(a:slug)
-    let l:cmd .= ' ' . shellescape(a:slug)
-  endif
-  echo system(l:cmd)
-endfunction
-
-function! s:LeetCodeNext() abort
-  let l:raw = system('leetcodevim next --format json')
-  try
-    let l:entry = json_decode(l:raw)
-  catch
-    echo 'Unable to read next problem.'
-    return
-  endtry
-  if type(l:entry) != v:t_dict || empty(l:entry)
-    echo 'No unsolved local problems.'
-    return
-  endif
-  execute 'edit ' . fnameescape(l:entry.path)
-endfunction
-
-function! s:LeetCodeRecent() abort
-  echo system('leetcodevim recent')
-endfunction
-
-function! s:LeetCodeTest(slug) abort
-  let l:cmd = 'leetcodevim test'
-  if !empty(a:slug)
-    let l:cmd .= ' --slug ' . shellescape(a:slug)
-  endif
-  echo system(l:cmd)
-endfunction
-
-function! s:LeetCodeListFzf() abort
-  if !exists('*fzf#run')
-    echo 'fzf.vim not detected.'
-    return
-  endif
-  let l:items = systemlist('leetcodevim list')
-  if empty(l:items)
-    echo 'No local problems found.'
-    return
-  endif
-  call fzf#run(fzf#wrap({
-        \ 'source': l:items,
-        \ 'sink': function('s:LeetCodeOpenFromLine'),
-        \ 'options': '--with-nth=1 --delimiter=\t --prompt="LeetCode> "',
-        \ }))
-endfunction
-
-function! s:LeetCodeOpenFromLine(line) abort
-  if empty(a:line)
-    return
-  endif
-  let l:path = split(a:line, "\t")[2]
-  execute 'edit ' . fnameescape(l:path)
-endfunction
-
-function! s:LeetCodeListTelescope() abort
-  if !has('nvim') || !exists(':Telescope')
-    echo 'telescope.nvim not detected.'
-    return
-  endif
-  let l:items = systemlist('leetcodevim list')
-  if empty(l:items)
-    echo 'No local problems found.'
-    return
-  endif
-  lua << EOF
-local ok, pickers = pcall(require, "telescope.pickers")
-if not ok then
-  vim.notify("telescope.nvim not available", vim.log.levels.WARN)
-  return
-end
-local finders = require("telescope.finders")
-local conf = require("telescope.config").values
-local actions = require("telescope.actions")
-local action_state = require("telescope.actions.state")
-
-local lines = vim.fn.systemlist("leetcodevim list")
-local results = {}
-for _, line in ipairs(lines) do
-  local slug, status, path = line:match("^(.-)\t(.-)\t(.*)$")
-  if slug and status and path then
-    table.insert(results, { display = slug .. " [" .. status .. "]", path = path })
-  end
-end
-
-pickers.new({}, {
-  prompt_title = "LeetCode Problems",
-  finder = finders.new_table({
-    results = results,
-    entry_maker = function(entry)
-      return {
-        value = entry,
-        display = entry.display,
-        ordinal = entry.display,
-      }
-    end,
-  }),
-  sorter = conf.generic_sorter({}),
-  attach_mappings = function(prompt_bufnr)
-    actions.select_default:replace(function()
-      local selection = action_state.get_selected_entry()
-      actions.close(prompt_bufnr)
-      if selection and selection.value and selection.value.path then
-        vim.cmd("edit " .. vim.fn.fnameescape(selection.value.path))
-      end
-    end)
-    return true
-  end,
-}):find()
-EOF
-endfunction
-
-function! s:LeetCodeListSmart() abort
-  if has('nvim') && exists(':Telescope')
-    call s:LeetCodeListTelescope()
-    return
-  endif
-  if exists('*fzf#run')
-    call s:LeetCodeListFzf()
-    return
-  endif
-  call s:LeetCodeList()
-endfunction
-
-command! -nargs=+ LeetCodeInit call s:LeetCodeInit(<f-args>)
-command! -nargs=1 LeetCodePull call s:LeetCodePull(<f-args>)
-command! LeetCodeList call s:LeetCodeList()
-command! -nargs=? LeetCodeStatus call s:LeetCodeStatus(<q-args>)
-command! LeetCodeNext call s:LeetCodeNext()
-command! LeetCodeRecent call s:LeetCodeRecent()
-command! -nargs=? LeetCodeTest call s:LeetCodeTest(<q-args>)
-command! LeetCodeListFzf call s:LeetCodeListFzf()
-command! LeetCodeListTelescope call s:LeetCodeListTelescope()
-command! LeetCodeListSmart call s:LeetCodeListSmart()
+command! LeetCode call leetcodevim#dashboard()
+command! -nargs=? LeetCodeBrowse call leetcodevim#browse(<q-args>)
+command! -nargs=1 LeetCodeOpen call leetcodevim#open(<q-args>)
+command! -nargs=1 LeetCodePull call leetcodevim#open(<q-args>)
+command! LeetCodeLogin call leetcodevim#login()
+command! LeetCodeLogout call leetcodevim#action('auth.logout')
+command! -nargs=? LeetCodeRun call leetcodevim#execute('run', <q-args>)
+command! -nargs=? LeetCodeSubmit call leetcodevim#execute('submit', <q-args>)
+command! -nargs=? LeetCodeTest call leetcodevim#execute('test', <q-args>)
+command! LeetCodeCases call leetcodevim#action('cases')
+command! LeetCodeNotes call leetcodevim#action('notes')
+command! LeetCodeCompose call leetcodevim#action('compose')
+command! -nargs=? LeetCodeMark call leetcodevim#mark(<q-args>)
+command! -nargs=1 LeetCodePoll call leetcodevim#poll(<q-args>)
+command! -nargs=1 LeetCodeRestore call leetcodevim#restore(<q-args>)
+command! LeetCodeHistory call leetcodevim#action('submissions')
+command! -nargs=? LeetCodeProfile call leetcodevim#profile(<q-args>)
+command! LeetCodeStudy call leetcodevim#action('study')
+command! LeetCodeContests call leetcodevim#action('contests')
+command! LeetCodeDiscuss call leetcodevim#action('discuss')
+command! LeetCodeFavorites call leetcodevim#action('favorites')
+command! LeetCodeFavorite call leetcodevim#action('favorite')
+command! LeetCodeUnfavorite call leetcodevim#unfavorite()
+command! LeetCodeSettings call leetcodevim#action('settings')
+command! LeetCodeEditorial call leetcodevim#action('editorial')
+command! LeetCodeHints call leetcodevim#hints()
+command! LeetCodeDescription call leetcodevim#view('description')
+command! LeetCodeBrowser call leetcodevim#view('browser')
+command! LeetCodeCode call leetcodevim#view('code')
+command! LeetCodeResults call leetcodevim#view('results')
+command! LeetCodeDaily call leetcodevim#pick('daily')
+command! LeetCodeRandom call leetcodevim#pick('random')
+command! -nargs=1 LeetCodeLanguage call leetcodevim#language(<q-args>)
+command! LeetCodeCancel call leetcodevim#cancel()
+command! LeetCodeClose call leetcodevim#close()
+command! LeetCodeDoctor call leetcodevim#action('doctor')
+command! LeetCodeList call leetcodevim#action('local')
+command! LeetCodeListSmart call leetcodevim#action('local')
+command! LeetCodeListFzf call leetcodevim#action('local')
+command! LeetCodeListTelescope call leetcodevim#action('local')
+command! -nargs=? LeetCodeStatus call leetcodevim#status(<q-args>)
+command! LeetCodeRecent call leetcodevim#action('recent')
+command! LeetCodeNext call leetcodevim#next()
+command! -nargs=+ LeetCodeInit call leetcodevim#init(<f-args>)

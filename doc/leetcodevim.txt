@@ -1,0 +1,53 @@
+*leetcodevim.txt*        LeetCode workspace for Vim and Neovim
+
+:LeetCode               Open the workspace in a dedicated tab.
+:LeetCodeOpen {slug}     Open a problem (LeetCodePull is an alias).
+:LeetCodeBrowse [query]  Browse/search questions. / searches; f filters; [ ] pages.
+:LeetCodeLanguage {lang} Switch python/cpp drafts.
+:LeetCodeCases          Edit cases.json next to the solution.
+:LeetCodeTest [slug]     Run local examples/custom cases.
+:LeetCodeRun [slug]      Execute on LeetCode (login required).
+:LeetCodeSubmit [slug]   Confirm and submit to LeetCode.
+:LeetCodeHistory        Show submission history/recorded remote IDs.
+:LeetCodeRestore {id}   Restore accessible submitted code; current draft is backed up.
+:LeetCodePoll {id}      Resume a recorded remote operation.
+:LeetCodeHints          Read cached hints.
+:LeetCodeEditorial      Read an accessible editorial, or use the browser fallback.
+:LeetCodeNotes          Edit local notes.
+:LeetCodeCompose        Edit a local discussion draft. Publish in your browser.
+:LeetCodeMark [status]  Update local progress.
+:LeetCodeProfile [user] Read profile statistics.
+:LeetCodeDaily          Open today's question.
+:LeetCodeRandom         Open a random question.
+:LeetCodeStudy          Open study plans in the browser.
+:LeetCodeFavorites      Open website lists in the browser.
+:LeetCodeFavorite       Save a local favorite (does not sync a website list).
+:LeetCodeContests       Read upcoming contests; select one to open its website.
+:LeetCodeDiscuss        Open the current question on the website.
+:LeetCodeLogin          Sign in through a browser, import cookies, or enter them
+                       with hidden input. Keychain or editor-session storage.
+:LeetCodeLogout         Clear credentials and private caches.
+:LeetCodeCancel         Cancel work. Remote operations already sent still run.
+:LeetCodeBrowser        Reveal the question browser (also F2).
+:LeetCodeDescription    Reveal the description.
+:LeetCodeCode           Focus the solution.
+:LeetCodeResults        Reveal results.
+:LeetCodeDoctor         Environment/capability diagnostics, without credentials.
+:LeetCodeClose          Close the workspace and return to the prior editor window.
+
+Selecting a problem hides the browser and expands the description/code panes.
+F2 restores the browser; its shortcut remains visible in the status line.
+Problem descriptions highlight sections, values, strings and parameter names.
+
+Set g:leetcodevim_command to ['absolute/path/to/leetcodevim'] if the CLI is not
+on PATH. Python runs as a child process; no embedded Python/Lua is needed in Vim.
+Neovim uses a Lua process adapter. Your theme and editor settings are retained.
+
+Local tests are examples only; official acceptance requires a submission.
+Unknown custom checkers and unsupported local types require remote execution.
+Study plans, discussion publication/voting, website list management, contest
+participation and billing use explicit browser fallbacks. Authenticated native
+adapters still require live acceptance with your account.
+
+See README.md and docs/protocol.md for installation and backend details.
+ vim:tw=78:ts=8:noet:ft=help:norl:

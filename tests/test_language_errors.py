@@ -17,9 +17,9 @@ def test_normalize_language_rejects_unknown_language():
         cli._normalize_language('javascript')
 
 
-def test_command_support_matrix_declares_cpp_scaffold_only_for_pull_and_list():
-    assert cli._command_support('pull', 'cpp') == 'scaffold-only'
-    assert cli._command_support('list', 'cpp') == 'scaffold-only'
+def test_command_support_matrix_declares_cpp_support():
+    assert cli._command_support('pull', 'cpp') == 'full'
+    assert cli._command_support('list', 'cpp') == 'full'
 
 
 def test_cpp_test_fails_early_with_actionable_message(tmp_path: Path, monkeypatch):
@@ -32,8 +32,7 @@ def test_cpp_test_fails_early_with_actionable_message(tmp_path: Path, monkeypatc
     monkeypatch.setattr(cli, '_ensure_config', lambda: config)
     monkeypatch.chdir(problem_dir)
 
-    with pytest.raises(SystemExit, match='Local test runner only supports python right now'):
-        cli.cmd_test(Namespace())
+    assert cli.cmd_test(Namespace()) == 1
 
 
 def test_cpp_submit_fails_early_with_actionable_message(tmp_path: Path, monkeypatch):
@@ -45,5 +44,4 @@ def test_cpp_submit_fails_early_with_actionable_message(tmp_path: Path, monkeypa
     monkeypatch.setattr(cli, '_ensure_config', lambda: config)
     monkeypatch.chdir(problem_dir)
 
-    with pytest.raises(SystemExit, match='Submit only supports python right now'):
-        cli.cmd_submit(Namespace())
+    assert cli.cmd_submit(Namespace()) == 1
