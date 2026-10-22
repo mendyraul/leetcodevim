@@ -1,6 +1,6 @@
 [project]
 name = "leetcode-vim"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI tooling for solving LeetCode in Vim"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,3 +26,13 @@ leetcodevim = "leetcode_vim.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+leetcode_vim = ["*.hpp", "vendor/*.hpp", "vendor/LICENSE*", "vendor/*.sha256"]
+
+[tool.setuptools.data-files]
+"share/leetcodevim/plugin" = ["plugin/leetcodevim.vim"]
+"share/leetcodevim/autoload" = ["autoload/leetcodevim.vim"]
+"share/leetcodevim/lua/leetcodevim" = ["lua/leetcodevim/transport.lua"]
+"share/leetcodevim/doc" = ["doc/leetcodevim.txt"]
+"share/leetcodevim/syntax" = ["syntax/leetcodevim.vim"]

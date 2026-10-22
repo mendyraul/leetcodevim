@@ -10,7 +10,7 @@ def test_workspace_repository_creates_versioned_database(tmp_path: Path):
     repository = SQLiteRepository(tmp_path / 'workspace')
     assert repository.path == tmp_path / 'workspace' / DATABASE_RELATIVE_PATH
     with repository._connect() as connection:
-        assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 2
 
 
 def test_legacy_json_is_imported_without_being_deleted(tmp_path: Path):

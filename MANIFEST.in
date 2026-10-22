@@ -1,0 +1,7 @@
+recursive-include plugin *.vim
+recursive-include autoload *.vim
+recursive-include syntax *.vim
+recursive-include lua *.lua
+recursive-include doc *.txt
+recursive-include docs *.md *.json
+recursive-include scripts *.py

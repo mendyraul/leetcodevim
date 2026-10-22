@@ -1,20 +1,15 @@
-# QA Notes
+# QA notes
 
-## Checks run
-- `python -m compileall -q src tests` ✅
-- `ruff check src tests` ✅
-- `pytest -q` ✅
-- `python -m build` ✅
-- Installed-wheel `leetcodevim --help` smoke test ✅
-- Headless Vim plugin load ✅
+The companion adds a shared stdio backend, Vim workspace, Neovim Lua adapter,
+account-scoped caches, local Python/C++ execution, and remote-operation adapters.
 
-## Current architecture
-- Workspace state, cached problem definitions, examples, and submission history live in `.leetcodevim/state.db`.
-- Existing `.leetcodevim-state.json` files are imported without deletion.
-- Python solutions use the LeetCode-provided `Solution` class/method scaffold.
-- C++ remains scaffold-only until a compiler/runtime contract is implemented.
+Verification commands and the current feature matrix are maintained in README.md
+and docs/capabilities.md. Headless tests cover both editors, reopening the
+workspace, narrow layouts, and late navigation replies. Unit/integration tests
+cover schema backup/migration, draft preservation, nodes and design classes,
+execution bounds, cancellation, credential storage, account isolation, operation
+resume, and source restoration with backups.
 
-## Remaining manual QA
-1. Pull a real problem with network access and confirm the generated method signature.
-2. Solve the cached examples and run `leetcodevim test --slug <slug>` from outside the problem directory.
-3. Verify keyring/browser-cookie auth and a real submission in a controlled account.
+Public live checks are explicitly invoked with scripts/smoke_public.py. Real
+account login, remote execution/submission, history, and editorial acceptance
+remain manual. Tests never import browser cookies or perform account writes.

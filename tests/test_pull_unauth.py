@@ -1,5 +1,7 @@
 from argparse import Namespace
 
+import pytest
+
 from leetcode_vim import cli
 from leetcode_vim.config import Config
 from leetcode_vim.leetcode_api import Problem
@@ -103,3 +105,40 @@ def test_pull_preserves_existing_metadata_when_public_fetch_fails(tmp_path, monk
     assert exit_code == 0
     assert (problem_dir / 'problem.txt').read_text(encoding='utf-8') == 'existing metadata\n'
     assert 'could not fetch public problem metadata' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('edited_solution', [False, True])
+def test_pull_recovers_after_network_failure_without_overwriting_user_code(tmp_path, monkeypatch, edited_solution):
+    config = Config(workspace=tmp_path / 'workspace', language='python')
+    monkeypatch.setattr(cli, '_ensure_config', lambda: config)
+    monkeypatch.setattr(cli, '_effective_session', lambda _config: None)
+
+    def fail_fetch(slug, auth=None):
+        raise cli.LeetCodeError('network down')
+
+    monkeypatch.setattr(cli, 'fetch_problem', fail_fetch)
+    cli.cmd_pull(Namespace(slug='two-sum'))
+    problem_dir = config.workspace / 'two-sum'
+    solution = problem_dir / 'solution.py'
+    user_code = '# My work\nclass Solution:\n    def twoSum(self, nums, target):\n        return [0, 1]\n'
+    if edited_solution:
+        solution.write_text(user_code, encoding='utf-8')
+    native_code = 'class Solution:\n    def twoSum(self, nums, target):\n        pass\n'
+    monkeypatch.setattr(cli, 'fetch_problem', lambda slug, auth=None: Problem(
+        title='Two Sum', title_slug=slug, question_id='1', difficulty='Easy',
+        content='<p>Example 1:</p><pre>Input: nums = [2,7], target = 9\nOutput: [0,1]</pre>',
+        sample_test_case='[2,7]\n9',
+        code_snippets=[{'langSlug': 'python3', 'code': native_code}],
+    ))
+
+    assert cli.cmd_pull(Namespace(slug='two-sum')) == 0
+    assert (problem_dir / 'problem.txt').read_text().startswith('Title: Two Sum')
+    assert (problem_dir / 'sample.txt').read_text() == '[2,7]\n9\n'
+    assert solution.read_text() == (user_code if edited_solution else native_code)
+    assert cli.repository(config).get_problem('two-sum').method_name == 'twoSum'
+
+    def unexpected_fetch(slug, auth=None):
+        pytest.fail('A cached problem should work offline after recovery')
+
+    monkeypatch.setattr(cli, 'fetch_problem', unexpected_fetch)
+    assert cli.cmd_pull(Namespace(slug='two-sum')) == 0

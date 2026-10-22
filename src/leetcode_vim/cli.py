@@ -17,11 +17,9 @@ from .leetcode_api import (
     LeetCodeSession,
     fetch_problem,
     fetch_user,
-    poll_submission,
-    submit_solution,
 )
 from .problem_model import build_problem_record
-from .runner import RunnerError, run_python_cases
+from .runner import RunnerError
 from .state import (
     ALLOWED_STATUSES,
     DEFAULT_STATUS,
@@ -30,29 +28,28 @@ from .state import (
     repository,
     update_problem_state,
 )
-from .storage import SubmissionRecord, utc_now
 from .templates import SUPPORTED_LANGUAGES, get_template
 
 LANGUAGE_SUPPORT_MATRIX: dict[str, dict[str, str]] = {
     "init": {
         "python": "full",
-        "cpp": "scaffold-only",
+        "cpp": "full",
     },
     "pull": {
         "python": "full",
-        "cpp": "scaffold-only",
+        "cpp": "full",
     },
     "list": {
         "python": "full",
-        "cpp": "scaffold-only",
+        "cpp": "full",
     },
     "test": {
         "python": "full",
-        "cpp": "unsupported",
+        "cpp": "full",
     },
     "submit": {
         "python": "full",
-        "cpp": "unsupported",
+        "cpp": "full",
     },
     "vim": {
         "python": "matches-cli",
@@ -107,27 +104,6 @@ def _command_support(command: str, language: str) -> str:
         raise SystemExit(f"Support matrix missing for command={command!r}, language={language!r}") from exc
 
 
-def _unsupported_language_message(command: str, language: str) -> str:
-    if command == "test" and language == "cpp":
-        return (
-            "Local test runner only supports python right now. "
-            "C++ is scaffold-only: you can init, pull, and list C++ problems, "
-            "but local test/submit flows are intentionally blocked until full support lands."
-        )
-    if command == "submit" and language == "cpp":
-        return (
-            "Submit only supports python right now. "
-            "C++ is scaffold-only: keep the template locally, but switch to python or submit manually on LeetCode."
-        )
-    return f"{command} does not support {language}."
-
-
-def _ensure_command_supported(command: str, language: str) -> None:
-    status = _command_support(command, language)
-    if status == "unsupported":
-        raise SystemExit(_unsupported_language_message(command, language))
-
-
 def cmd_init(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -135,12 +111,6 @@ def cmd_init(args: argparse.Namespace) -> int:
     config = Config(workspace=workspace, language=language)
     save_config(config)
     print(f"Initialized config at {workspace}")
-    if _command_support("init", language) == "scaffold-only":
-        print(
-            "Note: C++ is scaffold-only right now. You can init, pull, and list problems, "
-            "but local test and submit are not implemented.",
-            file=sys.stderr,
-        )
     return 0
 
 
@@ -155,16 +125,33 @@ def cmd_pull(args: argparse.Namespace) -> int:
     solution_path = problem_dir / f"solution.{ext}"
     metadata_path = problem_dir / "problem.txt"
     sample_path = problem_dir / "sample.txt"
+    failed_metadata = metadata_path.exists() and re.match(
+        rf"\AProblem: [^\n]*\nSlug: {re.escape(slug)}\n\nAPI error: ",
+        metadata_path.read_text(encoding="utf-8"),
+    ) is not None
+    replace_placeholder = (
+        failed_metadata
+        and solution_path.exists()
+        and solution_path.read_text(encoding="utf-8") == get_template(config.language)
+    )
     repo = repository(config)
     record = repo.get_problem(slug)
-    if record is None or not metadata_path.exists():
+    invalid_scaffold = record is not None and config.language == "python" and not record.method_name
+    replace_placeholder = replace_placeholder or (
+        invalid_scaffold
+        and solution_path.exists()
+        and solution_path.read_text(encoding="utf-8") == record.code
+    )
+    if record is None or not metadata_path.exists() or failed_metadata or invalid_scaffold:
         session = _effective_session(config)
         auth = LeetCodeSession(session=session, csrf=_effective_csrf(config)) if session else None
         try:
             problem = fetch_problem(slug, auth)
             record = build_problem_record(problem, slug, config.language, record)
             repo.save_problem(record)
-            if not metadata_path.exists():
+            from .companion_store import CompanionStore
+            CompanionStore(config.workspace).save_draft(record, problem.metadata, problem.hints)
+            if not metadata_path.exists() or failed_metadata:
                 metadata_path.write_text(_format_problem(problem), encoding="utf-8")
             if not sample_path.exists():
                 sample_text = _sample_text(problem)
@@ -182,77 +169,41 @@ def cmd_pull(args: argparse.Namespace) -> int:
                     "You can retry later or run with auth via `leetcodevim auth login`.",
                     file=sys.stderr,
                 )
-    if not solution_path.exists():
+    if not solution_path.exists() or (record is not None and replace_placeholder):
         solution_path.write_text(record.code if record else get_template(config.language), encoding="utf-8")
     ensure_problem_state(config, slug)
     print(str(solution_path))
     return 0
 
 
-def cmd_test(args: argparse.Namespace) -> int:
+def _companion_action(args, action):
+    from .service import Service
+    from .provider import ProviderError
     config = _ensure_config()
-    _ensure_command_supported("test", config.language)
-    problem_dir = _resolve_problem_dir(config, getattr(args, "slug", None))
-    record = repository(config).get_problem(problem_dir.name)
-    if record is None:
-        print("Problem metadata not found. Pull the problem first.")
-        return 1
-    if not record.examples:
-        print("Test failed: no parseable cached examples. Pull the problem again or add supported examples.")
-        return 1
-    solution_path = _resolve_solution_path(problem_dir, config.language)
+    slug = getattr(args, 'slug', None) or _resolve_problem_dir(config, None).name
     try:
-        results = run_python_cases(solution_path, record.method_name, list(record.examples))
-    except RunnerError as exc:
-        print(f"Test failed: {exc}")
+        result = Service(config).dispatch(action, {
+            'slug': slug, 'language': getattr(args, 'language', None) or config.language,
+            'confirmed': getattr(args, 'confirm', False),
+        })
+    except (ProviderError, RunnerError, ValueError) as exc:
+        print(f"{action.title()} failed: {exc}")
         return 1
-    update_problem_state(config, problem_dir.name, status="tested")
-    print(f"Passed {len(results)} example(s) for {problem_dir.name}.")
-    return 0
+    if getattr(args, 'format', 'text') == 'json':
+        print(json.dumps(result, indent=2))
+    elif action == 'test' and result.get('passed'):
+        print(f"Passed {len(result['results'])} example(s) for {slug}.")
+    else:
+        print(json.dumps(result, indent=2))
+    return 1 if result.get('passed') is False else 0
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    return _companion_action(args, 'test')
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
-    config = _ensure_config()
-    _ensure_command_supported("submit", config.language)
-    problem_dir = _resolve_problem_dir(config, getattr(args, "slug", None))
-    slug = problem_dir.name
-    session = _effective_session(config)
-    if not session:
-        print("LEETCODE_SESSION not set.")
-        return 1
-    auth = LeetCodeSession(session=session, csrf=_effective_csrf(config))
-    try:
-        problem = fetch_problem(slug, auth)
-    except LeetCodeError as exc:
-        print(f"Failed to fetch problem: {exc}")
-        return 1
-    solution_path = _resolve_solution_path(problem_dir, config.language)
-    code = solution_path.read_text(encoding="utf-8")
-    lang_slug = _language_slug(config.language)
-    try:
-        submission_id = submit_solution(slug, problem.question_id, lang_slug, code, auth)
-    except LeetCodeError as exc:
-        print(f"Submit failed: {exc}")
-        return 1
-    print(f"Submitted. ID: {submission_id}")
-    result = _poll_submission(submission_id, auth)
-    _print_submission_result(result)
-    repository(config).save_submissions(
-        [
-            SubmissionRecord(
-                slug=slug,
-                language=config.language,
-                remote_id=submission_id,
-                status=str(result.get("status_msg") or result.get("status_code") or "unknown"),
-                runtime=str(result.get("runtime")) if result.get("runtime") else None,
-                memory=str(result.get("memory")) if result.get("memory") else None,
-                submitted_at=utc_now(),
-            )
-        ]
-    )
-    if result.get("status_msg") == "Accepted":
-        update_problem_state(config, slug, status="submitted")
-    return 0
+    return _companion_action(args, 'submit')
 
 
 def _problem_entries(config: Config) -> list[dict[str, object]]:
@@ -369,7 +320,7 @@ def cmd_mark(args: argparse.Namespace) -> int:
 
 def cmd_auth_set(args: argparse.Namespace) -> int:
     config = _ensure_config()
-    save_auth(config, args.session, args.csrf)
+    save_auth(config, args.session, args.csrf, allow_file=getattr(args, 'allow_file', False))
     print("Saved LEETCODE_SESSION token.")
     return 0
 
@@ -386,18 +337,6 @@ def cmd_auth_show(_: argparse.Namespace) -> int:
     if csrf:
         masked_csrf = "*" * max(0, len(csrf) - 4) + csrf[-4:]
         print(f"LEETCODE_CSRF={masked_csrf}")
-    return 0
-
-
-def cmd_auth_login(_: argparse.Namespace) -> int:
-    steps = [
-        "1) Log in to LeetCode in your browser.",
-        "2) Open DevTools -> Application/Storage -> Cookies -> https://leetcode.com.",
-        "3) Copy the value for LEETCODE_SESSION.",
-        "4) Optional but recommended: copy csrftoken.",
-        "5) Run: leetcodevim auth set --session <LEETCODE_SESSION> --csrf <csrftoken>",
-    ]
-    print("\n".join(steps))
     return 0
 
 
@@ -451,10 +390,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     test_parser = subparsers.add_parser("test", help="run local tests")
     test_parser.add_argument("--slug", help="problem slug to test from any directory")
+    test_parser.add_argument('--language', choices=('python', 'cpp'))
+    test_parser.add_argument('--format', choices=('text', 'json'), default='text')
     test_parser.set_defaults(func=cmd_test)
 
     submit_parser = subparsers.add_parser("submit", help="submit solution")
     submit_parser.add_argument("--slug", help="problem slug to submit from any directory")
+    submit_parser.add_argument('--language', choices=('python', 'cpp'))
+    submit_parser.add_argument('--confirm', action='store_true', help='confirm sending this solution to LeetCode')
+    submit_parser.add_argument('--format', choices=('text', 'json'), default='text')
     submit_parser.set_defaults(func=cmd_submit)
 
     list_parser = subparsers.add_parser("list", help="list local problems")
@@ -487,13 +431,18 @@ def build_parser() -> argparse.ArgumentParser:
     auth_set = auth_subparsers.add_parser("set", help="store LEETCODE_SESSION")
     auth_set.add_argument("--session", required=True, help="LEETCODE_SESSION cookie value")
     auth_set.add_argument("--csrf", help="csrftoken cookie value (recommended)")
+    auth_set.add_argument('--allow-file', action='store_true', help='explicitly allow protected-file credential storage')
     auth_set.set_defaults(func=cmd_auth_set)
 
     auth_show = auth_subparsers.add_parser("show", help="show auth status")
     auth_show.set_defaults(func=cmd_auth_show)
 
     auth_login = auth_subparsers.add_parser("login", help="print login instructions")
-    auth_login.set_defaults(func=cmd_auth_login)
+    from .companion_cli import login
+    auth_login.add_argument('--browser', choices=('chrome', 'chromium', 'brave', 'edge', 'firefox'))
+    auth_login.add_argument('--cookies', action='store_true', help='enter cookies through hidden input')
+    auth_login.add_argument('--open-browser', action='store_true')
+    auth_login.set_defaults(func=login)
 
     auth_whoami = auth_subparsers.add_parser("whoami", help="verify auth and show username")
     auth_whoami.set_defaults(func=cmd_auth_whoami)
@@ -506,6 +455,8 @@ def build_parser() -> argparse.ArgumentParser:
     auth_import.add_argument("--domain", default="leetcode.com", help="cookie domain to search")
     auth_import.set_defaults(func=cmd_auth_import)
 
+    from .companion_cli import extend
+    extend(subparsers)
     return parser
 
 
@@ -537,28 +488,6 @@ def _language_slug(language: str) -> str:
     if language not in mapping:
         raise SystemExit(f"Unsupported language: {language}")
     return mapping[language]
-
-
-def _poll_submission(submission_id: str, auth: LeetCodeSession) -> dict[str, object]:
-    import time
-
-    for _ in range(10):
-        result = poll_submission(submission_id, auth)
-        if result.get("state") == "SUCCESS":
-            return result
-        time.sleep(1)
-    return result
-
-
-def _print_submission_result(result: dict[str, object]) -> None:
-    status = result.get("status_msg") or result.get("status_code")
-    runtime = result.get("runtime")
-    memory = result.get("memory")
-    print(f"Result: {status}")
-    if runtime:
-        print(f"Runtime: {runtime}")
-    if memory:
-        print(f"Memory: {memory}")
 
 
 class _ProblemHTMLFormatter(HTMLParser):
@@ -686,7 +615,11 @@ def _format_problem(problem: object) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (AuthImportError, LeetCodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

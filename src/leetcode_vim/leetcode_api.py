@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 LEETCODE_GRAPHQL_URL = "https://leetcode.com/graphql"
@@ -24,6 +24,9 @@ class Problem:
     difficulty: str
     sample_test_case: str | None
     code_snippets: list[dict[str, str]]
+    metadata: dict = field(default_factory=dict)
+    hints: list[str] = field(default_factory=list)
+    paid_only: bool = False
 
 
 class LeetCodeError(RuntimeError):
@@ -75,6 +78,9 @@ def fetch_problem(slug: str, auth: LeetCodeSession | None = None) -> Problem:
         content
         difficulty
         sampleTestCase
+        metaData
+        hints
+        isPaidOnly
         codeSnippets {
           lang
           langSlug
@@ -95,6 +101,9 @@ def fetch_problem(slug: str, auth: LeetCodeSession | None = None) -> Problem:
         difficulty=question["difficulty"],
         sample_test_case=question.get("sampleTestCase"),
         code_snippets=question.get("codeSnippets") or [],
+        metadata=json.loads(question.get("metaData") or "{}"),
+        hints=question.get("hints") or [],
+        paid_only=bool(question.get('isPaidOnly')),
     )
 
 

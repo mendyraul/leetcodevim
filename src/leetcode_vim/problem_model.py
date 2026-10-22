@@ -16,9 +16,19 @@ class _PlainTextParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.in_pre = False
+        self.links: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "br":
+        values = dict(attrs)
+        if tag == 'img':
+            self.parts.append('\n[Image: ' + (values.get('alt') or 'diagram') + '] ' + (values.get('src') or '') + '\n')
+        elif tag == 'a':
+            self.links.append(values.get('href') or '')
+        elif tag == 'tr':
+            self.parts.append('\n')
+        elif tag in ('td', 'th'):
+            self.parts.append(' | ')
+        elif tag == "br":
             self.parts.append("\n")
         elif tag == "pre":
             self.parts.append("\n\n")
@@ -27,6 +37,10 @@ class _PlainTextParser(HTMLParser):
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == 'a' and self.links:
+            url = self.links.pop()
+            if url:
+                self.parts.append(' (' + url + ')')
         if tag == "pre":
             self.parts.append("\n")
             self.in_pre = False
@@ -98,10 +112,10 @@ def parse_examples(content: str, parameter_names: tuple[str, ...]) -> list[dict[
         if not re.search(r"Example\s+\d+\s*:", block, re.IGNORECASE):
             continue
         input_match = re.search(
-            r"Input\s*:\s*(.+?)(?=\n\s*Output\s*:|\Z)", block, flags=re.IGNORECASE | re.DOTALL
+            r"Input\s*:?\s*(.+?)(?=\n\s*Output\s*:?|\Z)", block, flags=re.IGNORECASE | re.DOTALL
         )
         output_match = re.search(
-            r"Output\s*:\s*(.+?)(?=\n\s*(?:Explanation|Example\s+\d+|Constraints|Follow-up)\s*:|\Z)",
+            r"Output\s*:?\s*(.+?)(?=\n\s*(?:Explanation|Example\s+\d+|Constraints|Follow-up)\s*:?|\Z)",
             block,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -114,12 +128,25 @@ def parse_examples(content: str, parameter_names: tuple[str, ...]) -> list[dict[
 
 
 def _python_snippet(problem: Problem) -> str:
-    for snippet in problem.code_snippets:
+    for snippet in sorted(problem.code_snippets, key=lambda s: s.get('langSlug') != 'python3'):
         lang = (snippet.get("langSlug") or snippet.get("lang") or "").lower()
         if lang in {"python", "python3"} or "python" in lang:
             code = snippet.get("code")
             if code:
-                return code.rstrip() + "\n"
+                lines, pending = [], None
+                # Design-class templates can contain several empty methods.
+                for line in code.rstrip().splitlines():
+                    if line.strip() and not line.lstrip().startswith('#'):
+                        indent = len(line) - len(line.lstrip())
+                        if pending is not None and indent <= pending:
+                            lines.append(' ' * (pending + 4) + 'pass')
+                        pending = None
+                        if re.match(r"\s*(?:async\s+)?def\s+.*:\s*$", line):
+                            pending = indent
+                    lines.append(line)
+                if pending is not None:
+                    lines.append(' ' * (pending + 4) + 'pass')
+                return '\n'.join(lines) + '\n'
     return get_template("python")
 
 
@@ -142,8 +169,15 @@ def inspect_python_code(code: str) -> tuple[str | None, tuple[str, ...]]:
 
 
 def build_problem_record(problem: Problem, slug: str, language: str, existing: ProblemRecord | None = None) -> ProblemRecord:
-    code = _python_snippet(problem) if language == "python" else get_template(language)
-    method_name, parameter_names = inspect_python_code(code) if language == "python" else (None, ())
+    python_code = _python_snippet(problem)
+    code = python_code if language == "python" else next(
+        (s['code'] for s in problem.code_snippets if s.get('langSlug') == 'cpp' and s.get('code')), get_template(language))
+    method_name, parameter_names = inspect_python_code(python_code)
+    if problem.metadata.get('name') and not problem.metadata.get('systemdesign'):
+        method_name = problem.metadata['name']
+        parameter_names = tuple(p['name'] for p in problem.metadata.get('params', [])) or parameter_names
+    if problem.metadata.get('systemdesign'):
+        method_name, parameter_names = None, ()
     examples = parse_examples(problem.content, parameter_names)
     if problem.sample_test_case and examples:
         examples[0]["args"] = parse_input(problem.sample_test_case, parameter_names)
